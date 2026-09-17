@@ -1179,7 +1179,12 @@ fn test_confirm_delivery_calls_increase_reputation() {
 // ── User Registration Tests ───────────────────────────────────────────────────
 
 #[test]
-fn test_create_delivery_registers_sender_and_recipient() {
+fn test_create_delivery_registers_sender_only() {
+    // Only `sender` is auto-registered: identity_reputation_contract::
+    // register_user requires user.require_auth(), and recipient never
+    // authorizes anything at delivery-creation time (only sender does), so
+    // registering recipient on their behalf is neither possible nor
+    // appropriate here.
     let env = Env::default();
     let (client, shipper, _driver, recipient, _escrow_id, reputation_id) = setup_full(&env);
     let metadata = get_test_metadata(&env, 1);
@@ -1190,11 +1195,11 @@ fn test_create_delivery_registers_sender_and_recipient() {
         env.storage()
             .temporary()
             .get(&Symbol::new(&env, "registered_user"))
-            .unwrap_or(shipper.clone())
+            .unwrap_or(recipient.clone())
     });
     assert_eq!(
-        last_registered, recipient,
-        "Expected recipient to be registered after create_delivery"
+        last_registered, shipper,
+        "Expected sender to be registered after create_delivery, and recipient not to be"
     );
 }
 
@@ -1612,7 +1617,10 @@ fn test_on_time_delivery_confirmation() {
 }
 
 #[test]
-fn test_create_deliveries_batch_registers_users() {
+fn test_create_deliveries_batch_registers_sender_only() {
+    // See test_create_delivery_registers_sender_only: only `sender` is
+    // auto-registered, never `recipient`, since recipient never authorizes
+    // the batch-creation call.
     let env = Env::default();
     let (client, shipper, _driver, recipient, _escrow_id, reputation_id) = setup_full(&env);
 
@@ -1651,11 +1659,11 @@ fn test_create_deliveries_batch_registers_users() {
         env.storage()
             .temporary()
             .get(&Symbol::new(&env, "registered_user"))
-            .unwrap_or(shipper.clone())
+            .unwrap_or(recipient.clone())
     });
     assert_eq!(
-        last_registered, recipient,
-        "Expected recipient to be registered after create_deliveries_batch"
+        last_registered, shipper,
+        "Expected sender to be registered after create_deliveries_batch, and recipient not to be"
     );
 }
 
@@ -1673,7 +1681,12 @@ fn test_create_delivery_allows_existing_identity_profiles() {
         &identity_id,
     );
     assert_eq!(identity_client.get_user_profile(&sender).address, sender);
-    assert_eq!(identity_client.get_user_profile(&recipient).address, recipient);
+    // `recipient` is deliberately NOT auto-registered: identity_reputation_
+    // contract::register_user requires user.require_auth(), and recipient
+    // never authorizes anything at delivery-creation time (only `sender`
+    // does). Auto-registering recipient here would require a signature this
+    // flow does not and should not have.
+    assert!(!identity_client.has_user_profile(&recipient));
 }
 
 #[test]
@@ -1691,7 +1704,9 @@ fn test_create_deliveries_batch_allows_existing_identity_profiles() {
         &identity_id,
     );
     assert_eq!(identity_client.get_user_profile(&sender).address, sender);
-    assert_eq!(identity_client.get_user_profile(&recipient).address, recipient);
+    // See the comment in test_create_delivery_allows_existing_identity_profiles:
+    // recipient is never auto-registered since they never authorize the call.
+    assert!(!identity_client.has_user_profile(&recipient));
 }
 
 #[test]

@@ -14,6 +14,17 @@ use soroban_sdk::{
 
 // Local DeliveryMetadata removed in favor of shared_types::DeliveryMetadata
 
+/// Auto-registers a `UserProfile` for `user` in the configured identity
+/// contract, if one doesn't already exist.
+///
+/// Only ever called with `sender` — never `recipient` — because
+/// `identity_reputation_contract::register_user` requires `user.require_auth()`.
+/// `sender` is the party that already authorized this top-level call, so the
+/// nested cross-contract `require_auth()` for the same address is satisfied
+/// by that existing authorization. `recipient` has not authorized anything
+/// at delivery-creation time (a sender may create a delivery to any
+/// recipient address unilaterally), so calling this on their behalf would
+/// require a real signature this flow does not and should not have.
 fn ensure_user_profile(env: &Env, identity_contract: &Address, user: &Address) {
     let has_profile: bool = env.invoke_contract(
         identity_contract,
@@ -239,7 +250,6 @@ impl DeliveryContract {
 
         if let Some(identity_contract) = Self::get_identity_reputation_contract(env.clone()) {
             ensure_user_profile(&env, &identity_contract, &sender);
-            ensure_user_profile(&env, &identity_contract, &recipient);
         }
 
         let mut counter: u64 = env
@@ -338,7 +348,6 @@ impl DeliveryContract {
 
         if let Some(identity_contract) = Self::get_identity_reputation_contract(env.clone()) {
             ensure_user_profile(&env, &identity_contract, &sender);
-            ensure_user_profile(&env, &identity_contract, &recipient);
         }
 
         let mut result = soroban_sdk::Vec::new(&env);

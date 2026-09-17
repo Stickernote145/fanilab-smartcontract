@@ -249,6 +249,7 @@ impl IdentityReputationContract {
 
     #[allow(deprecated)] // events().publish() is deprecated in SDK 27.0.0 but still functional; tracked in SOROBAN_SDK_27_MIGRATION.md#event-system-migration (Issue #114)
     pub fn register_user(env: Env, user: Address) -> UserProfile {
+        user.require_auth();
         let registered_at = env.ledger().timestamp();
 
         let profile = UserProfile {

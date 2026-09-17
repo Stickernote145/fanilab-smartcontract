@@ -29,6 +29,15 @@ fn last_event(env: &Env) -> (Address, soroban_sdk::Vec<Val>, Val) {
     (address, topics, data)
 }
 
+/// Convenience for call sites that don't need to exercise multi-sig: an
+/// empty co-signers vec, satisfying a threshold-1 fleet by `caller`/`owner`
+/// alone. See `test_signer_threshold_is_enforced_for_fleet_actions` and
+/// `test_signer_threshold_satisfied_by_co_signers` for actual threshold-2+
+/// coverage.
+fn no_co_signers(env: &Env) -> soroban_sdk::Vec<Address> {
+    soroban_sdk::Vec::new(env)
+}
+
 fn setup_test() -> (Env, FleetManagementContractClient<'static>, Address) {
     let env = Env::default();
     env.mock_all_auths();
@@ -184,7 +193,7 @@ fn test_admin_force_update_treasury_bypasses_timelock_and_clears_pending_change(
     let proposed_treasury = Address::generate(&env);
     let emergency_treasury = Address::generate(&env);
 
-    client.update_fleet_treasury(&owner, &fleet_id, &proposed_treasury);
+    client.update_fleet_treasury(&owner, &fleet_id, &proposed_treasury, &no_co_signers(&env));
     client.admin_force_update_treasury(&admin, &fleet_id, &emergency_treasury);
 
     let profile = client.get_fleet(&fleet_id);
@@ -222,7 +231,7 @@ fn test_update_fleet_treasury_does_not_apply_immediately() {
     let (fleet_id, owner, old_treasury) = register_fleet(&env, &client);
     let new_treasury = Address::generate(&env);
 
-    client.update_fleet_treasury(&owner, &fleet_id, &new_treasury);
+    client.update_fleet_treasury(&owner, &fleet_id, &new_treasury, &no_co_signers(&env));
 
     // Proposing a change must not redirect payouts until confirmed.
     let profile = client.get_fleet(&fleet_id);
@@ -238,7 +247,7 @@ fn test_update_fleet_treasury_emits_proposed_event_immediately() {
     let (fleet_id, owner, treasury) = register_fleet(&env, &client);
     let new_treasury = Address::generate(&env);
 
-    client.update_fleet_treasury(&owner, &fleet_id, &new_treasury);
+    client.update_fleet_treasury(&owner, &fleet_id, &new_treasury, &no_co_signers(&env));
 
     let last_event = last_event(&env);
 
@@ -261,7 +270,7 @@ fn test_update_fleet_treasury_rejects_non_owner() {
     let attacker = Address::generate(&env);
     let new_treasury = Address::generate(&env);
 
-    client.update_fleet_treasury(&attacker, &fleet_id, &new_treasury);
+    client.update_fleet_treasury(&attacker, &fleet_id, &new_treasury, &no_co_signers(&env));
 }
 
 #[test]
@@ -271,7 +280,7 @@ fn test_confirm_fleet_treasury_update_before_timelock_panics() {
     let (fleet_id, owner, _treasury) = register_fleet(&env, &client);
     let new_treasury = Address::generate(&env);
 
-    client.update_fleet_treasury(&owner, &fleet_id, &new_treasury);
+    client.update_fleet_treasury(&owner, &fleet_id, &new_treasury, &no_co_signers(&env));
     // Timelock has not elapsed yet — must panic.
     client.confirm_fleet_treasury_update(&fleet_id);
 }
@@ -292,7 +301,7 @@ fn test_confirm_fleet_treasury_update_applies_after_timelock() {
     let (fleet_id, owner, _old_treasury) = register_fleet(&env, &client);
     let new_treasury = Address::generate(&env);
 
-    client.update_fleet_treasury(&owner, &fleet_id, &new_treasury);
+    client.update_fleet_treasury(&owner, &fleet_id, &new_treasury, &no_co_signers(&env));
     env.ledger()
         .set_timestamp(env.ledger().timestamp() + TREASURY_CHANGE_TIMELOCK_SECONDS);
     client.confirm_fleet_treasury_update(&fleet_id);
@@ -317,7 +326,7 @@ fn test_add_driver_stores_pending_invite() {
     let (fleet_id, owner, _treasury) = register_fleet(&env, &client);
 
     let driver = Address::generate(&env);
-    client.add_driver_to_fleet(&owner, &fleet_id, &driver);
+    client.add_driver_to_fleet(&owner, &fleet_id, &driver, &no_co_signers(&env));
 
     let status = client.get_driver_fleet_status(&fleet_id, &driver);
     assert_eq!(status, Some(DriverFleetStatus::Pending));
@@ -329,7 +338,7 @@ fn test_add_driver_emits_driver_invited_event() {
     let (fleet_id, owner, _treasury) = register_fleet(&env, &client);
 
     let driver = Address::generate(&env);
-    client.add_driver_to_fleet(&owner, &fleet_id, &driver);
+    client.add_driver_to_fleet(&owner, &fleet_id, &driver, &no_co_signers(&env));
 
     let last_event = last_event(&env);
 
@@ -348,9 +357,9 @@ fn test_add_driver_twice_panics() {
     let (fleet_id, owner, _treasury) = register_fleet(&env, &client);
 
     let driver = Address::generate(&env);
-    client.add_driver_to_fleet(&owner, &fleet_id, &driver);
+    client.add_driver_to_fleet(&owner, &fleet_id, &driver, &no_co_signers(&env));
     // Second invite to the same driver must panic.
-    client.add_driver_to_fleet(&owner, &fleet_id, &driver);
+    client.add_driver_to_fleet(&owner, &fleet_id, &driver, &no_co_signers(&env));
 }
 
 #[test]
@@ -359,7 +368,7 @@ fn test_add_driver_to_unknown_fleet_panics() {
     let (env, client, _admin) = setup_test();
     let caller = Address::generate(&env);
     let driver = Address::generate(&env);
-    client.add_driver_to_fleet(&caller, &999, &driver);
+    client.add_driver_to_fleet(&caller, &999, &driver, &no_co_signers(&env));
 }
 
 // ── Issue #109 tests — cancel_invite ──────────────────────────────────────────
@@ -370,13 +379,13 @@ fn test_cancel_invite_allows_immediate_reinvite() {
     let (fleet_id, owner, _treasury) = register_fleet(&env, &client);
 
     let driver = Address::generate(&env);
-    client.add_driver_to_fleet(&owner, &fleet_id, &driver);
-    client.cancel_invite(&owner, &fleet_id, &driver);
+    client.add_driver_to_fleet(&owner, &fleet_id, &driver, &no_co_signers(&env));
+    client.cancel_invite(&owner, &fleet_id, &driver, &no_co_signers(&env));
 
     assert_eq!(client.get_driver_fleet_status(&fleet_id, &driver), None);
 
     // Re-inviting immediately afterward must succeed (no DriverAlreadyInvited panic).
-    client.add_driver_to_fleet(&owner, &fleet_id, &driver);
+    client.add_driver_to_fleet(&owner, &fleet_id, &driver, &no_co_signers(&env));
     let status = client.get_driver_fleet_status(&fleet_id, &driver);
     assert_eq!(status, Some(DriverFleetStatus::Pending));
 }
@@ -388,10 +397,10 @@ fn test_cancel_invite_non_signer_is_rejected() {
     let (fleet_id, owner, _treasury) = register_fleet(&env, &client);
 
     let driver = Address::generate(&env);
-    client.add_driver_to_fleet(&owner, &fleet_id, &driver);
+    client.add_driver_to_fleet(&owner, &fleet_id, &driver, &no_co_signers(&env));
 
     let attacker = Address::generate(&env);
-    client.cancel_invite(&attacker, &fleet_id, &driver);
+    client.cancel_invite(&attacker, &fleet_id, &driver, &no_co_signers(&env));
 }
 
 #[test]
@@ -401,7 +410,7 @@ fn test_cancel_invite_with_no_invite_panics() {
     let (fleet_id, owner, _treasury) = register_fleet(&env, &client);
 
     let driver = Address::generate(&env);
-    client.cancel_invite(&owner, &fleet_id, &driver);
+    client.cancel_invite(&owner, &fleet_id, &driver, &no_co_signers(&env));
 }
 
 #[test]
@@ -411,10 +420,10 @@ fn test_cancel_invite_on_active_driver_panics() {
     let (fleet_id, owner, _treasury) = register_fleet(&env, &client);
 
     let driver = Address::generate(&env);
-    client.add_driver_to_fleet(&owner, &fleet_id, &driver);
+    client.add_driver_to_fleet(&owner, &fleet_id, &driver, &no_co_signers(&env));
     client.accept_fleet_invite(&fleet_id, &driver);
 
-    client.cancel_invite(&owner, &fleet_id, &driver);
+    client.cancel_invite(&owner, &fleet_id, &driver, &no_co_signers(&env));
 }
 
 // Issue #74 — Fleet Owner Authorization ─────────────────────────────────────
@@ -428,7 +437,7 @@ fn test_add_driver_non_owner_is_rejected() {
     let attacker = Address::generate(&env);
     let driver = Address::generate(&env);
     // attacker is not the fleet owner — must panic with Unauthorized.
-    client.add_driver_to_fleet(&attacker, &fleet_id, &driver);
+    client.add_driver_to_fleet(&attacker, &fleet_id, &driver, &no_co_signers(&env));
 }
 
 #[test]
@@ -438,7 +447,7 @@ fn test_add_driver_only_owner_can_invite() {
 
     let driver = Address::generate(&env);
     // Fleet owner successfully invites a driver.
-    client.add_driver_to_fleet(&owner, &fleet_id, &driver);
+    client.add_driver_to_fleet(&owner, &fleet_id, &driver, &no_co_signers(&env));
     assert_eq!(
         client.get_driver_fleet_status(&fleet_id, &driver),
         Some(DriverFleetStatus::Pending)
@@ -453,7 +462,7 @@ fn test_accept_invite_promotes_driver_to_active() {
     let (fleet_id, owner, _treasury) = register_fleet(&env, &client);
 
     let driver = Address::generate(&env);
-    client.add_driver_to_fleet(&owner, &fleet_id, &driver);
+    client.add_driver_to_fleet(&owner, &fleet_id, &driver, &no_co_signers(&env));
     client.accept_fleet_invite(&fleet_id, &driver);
 
     let status = client.get_driver_fleet_status(&fleet_id, &driver);
@@ -468,8 +477,8 @@ fn test_accept_invite_increments_active_driver_count() {
     let driver_a = Address::generate(&env);
     let driver_b = Address::generate(&env);
 
-    client.add_driver_to_fleet(&owner, &fleet_id, &driver_a);
-    client.add_driver_to_fleet(&owner, &fleet_id, &driver_b);
+    client.add_driver_to_fleet(&owner, &fleet_id, &driver_a, &no_co_signers(&env));
+    client.add_driver_to_fleet(&owner, &fleet_id, &driver_b, &no_co_signers(&env));
 
     client.accept_fleet_invite(&fleet_id, &driver_a);
     let profile = client.get_fleet(&fleet_id);
@@ -486,7 +495,7 @@ fn test_accept_invite_emits_event() {
     let (fleet_id, owner, _treasury) = register_fleet(&env, &client);
 
     let driver = Address::generate(&env);
-    client.add_driver_to_fleet(&owner, &fleet_id, &driver);
+    client.add_driver_to_fleet(&owner, &fleet_id, &driver, &no_co_signers(&env));
     client.accept_fleet_invite(&fleet_id, &driver);
 
     let last_event = last_event(&env);
@@ -513,7 +522,7 @@ fn test_accept_invite_twice_panics() {
     let (fleet_id, owner, _treasury) = register_fleet(&env, &client);
 
     let driver = Address::generate(&env);
-    client.add_driver_to_fleet(&owner, &fleet_id, &driver);
+    client.add_driver_to_fleet(&owner, &fleet_id, &driver, &no_co_signers(&env));
     client.accept_fleet_invite(&fleet_id, &driver);
     // Accepting again must panic.
     client.accept_fleet_invite(&fleet_id, &driver);
@@ -527,11 +536,11 @@ fn test_remove_active_driver_decrements_count() {
     let (fleet_id, owner, _treasury) = register_fleet(&env, &client);
 
     let driver = Address::generate(&env);
-    client.add_driver_to_fleet(&owner, &fleet_id, &driver);
+    client.add_driver_to_fleet(&owner, &fleet_id, &driver, &no_co_signers(&env));
     client.accept_fleet_invite(&fleet_id, &driver);
 
     // Owner removes the driver.
-    client.remove_driver_from_fleet(&fleet_id, &owner, &driver);
+    client.remove_driver_from_fleet(&fleet_id, &owner, &driver, &no_co_signers(&env));
 
     let profile = client.get_fleet(&fleet_id);
     assert_eq!(profile.total_active_drivers, 0);
@@ -546,10 +555,10 @@ fn test_remove_pending_driver_does_not_affect_active_count() {
     let (fleet_id, owner, _treasury) = register_fleet(&env, &client);
 
     let driver = Address::generate(&env);
-    client.add_driver_to_fleet(&owner, &fleet_id, &driver);
+    client.add_driver_to_fleet(&owner, &fleet_id, &driver, &no_co_signers(&env));
     // Driver has NOT accepted — still Pending.
 
-    client.remove_driver_from_fleet(&fleet_id, &owner, &driver);
+    client.remove_driver_from_fleet(&fleet_id, &owner, &driver, &no_co_signers(&env));
 
     let profile = client.get_fleet(&fleet_id);
     assert_eq!(profile.total_active_drivers, 0);
@@ -564,11 +573,11 @@ fn test_driver_can_remove_themselves() {
     let (fleet_id, owner, _treasury) = register_fleet(&env, &client);
 
     let driver = Address::generate(&env);
-    client.add_driver_to_fleet(&owner, &fleet_id, &driver);
+    client.add_driver_to_fleet(&owner, &fleet_id, &driver, &no_co_signers(&env));
     client.accept_fleet_invite(&fleet_id, &driver);
 
     // Driver removes themselves (caller == driver).
-    client.remove_driver_from_fleet(&fleet_id, &driver, &driver);
+    client.remove_driver_from_fleet(&fleet_id, &driver, &driver, &no_co_signers(&env));
 
     let status = client.get_driver_fleet_status(&fleet_id, &driver);
     assert_eq!(status, Some(DriverFleetStatus::Removed));
@@ -580,8 +589,8 @@ fn test_remove_driver_emits_event() {
     let (fleet_id, owner, _treasury) = register_fleet(&env, &client);
 
     let driver = Address::generate(&env);
-    client.add_driver_to_fleet(&owner, &fleet_id, &driver);
-    client.remove_driver_from_fleet(&fleet_id, &owner, &driver);
+    client.add_driver_to_fleet(&owner, &fleet_id, &driver, &no_co_signers(&env));
+    client.remove_driver_from_fleet(&fleet_id, &owner, &driver, &no_co_signers(&env));
 
     let last_event = last_event(&env);
 
@@ -595,7 +604,7 @@ fn test_remove_driver_unknown_fleet_panics() {
     let (env, client, _admin) = setup_test();
     let caller = Address::generate(&env);
     let driver = Address::generate(&env);
-    client.remove_driver_from_fleet(&999, &caller, &driver);
+    client.remove_driver_from_fleet(&999, &caller, &driver, &no_co_signers(&env));
 }
 
 #[test]
@@ -606,7 +615,7 @@ fn test_remove_driver_not_in_fleet_panics() {
 
     let driver = Address::generate(&env);
     // Driver was never invited — must panic.
-    client.remove_driver_from_fleet(&fleet_id, &owner, &driver);
+    client.remove_driver_from_fleet(&fleet_id, &owner, &driver, &no_co_signers(&env));
 }
 
 #[test]
@@ -616,11 +625,11 @@ fn test_remove_driver_unauthorized_caller_panics() {
     let (fleet_id, owner, _treasury) = register_fleet(&env, &client);
 
     let driver = Address::generate(&env);
-    client.add_driver_to_fleet(&owner, &fleet_id, &driver);
+    client.add_driver_to_fleet(&owner, &fleet_id, &driver, &no_co_signers(&env));
 
     let random_caller = Address::generate(&env);
     // random_caller is neither owner nor driver — must panic.
-    client.remove_driver_from_fleet(&fleet_id, &random_caller, &driver);
+    client.remove_driver_from_fleet(&fleet_id, &random_caller, &driver, &no_co_signers(&env));
 }
 
 // ── Issue #75 tests — Fleet Roster Management ────────────────────────────────
@@ -633,7 +642,7 @@ fn test_roster_full_lifecycle_add_accept_remove() {
     let driver = Address::generate(&env);
 
     // Add: driver starts as Pending.
-    client.add_driver_to_fleet(&owner, &fleet_id, &driver);
+    client.add_driver_to_fleet(&owner, &fleet_id, &driver, &no_co_signers(&env));
     assert_eq!(
         client.get_driver_fleet_status(&fleet_id, &driver),
         Some(DriverFleetStatus::Pending)
@@ -649,7 +658,7 @@ fn test_roster_full_lifecycle_add_accept_remove() {
     assert_eq!(client.get_fleet_roster(&fleet_id), soroban_sdk::vec![&env, driver.clone()]);
 
     // Remove: record deleted, count decrements.
-    client.remove_driver_from_fleet(&fleet_id, &owner, &driver);
+    client.remove_driver_from_fleet(&fleet_id, &owner, &driver, &no_co_signers(&env));
     assert_eq!(
         client.get_driver_fleet_status(&fleet_id, &driver),
         Some(DriverFleetStatus::Removed)
@@ -667,9 +676,9 @@ fn test_roster_multiple_drivers_independent_states() {
     let driver_b = Address::generate(&env);
     let driver_c = Address::generate(&env);
 
-    client.add_driver_to_fleet(&owner, &fleet_id, &driver_a);
-    client.add_driver_to_fleet(&owner, &fleet_id, &driver_b);
-    client.add_driver_to_fleet(&owner, &fleet_id, &driver_c);
+    client.add_driver_to_fleet(&owner, &fleet_id, &driver_a, &no_co_signers(&env));
+    client.add_driver_to_fleet(&owner, &fleet_id, &driver_b, &no_co_signers(&env));
+    client.add_driver_to_fleet(&owner, &fleet_id, &driver_c, &no_co_signers(&env));
 
     // Accept only a and b.
     client.accept_fleet_invite(&fleet_id, &driver_a);
@@ -682,7 +691,7 @@ fn test_roster_multiple_drivers_independent_states() {
     );
 
     // Remove driver_a; driver_b and driver_c unaffected.
-    client.remove_driver_from_fleet(&fleet_id, &owner, &driver_a);
+    client.remove_driver_from_fleet(&fleet_id, &owner, &driver_a, &no_co_signers(&env));
     assert_eq!(client.get_fleet(&fleet_id).total_active_drivers, 1);
     assert_eq!(
         client.get_driver_fleet_status(&fleet_id, &driver_b),
@@ -700,11 +709,11 @@ fn test_roster_driver_can_leave_voluntarily() {
     let (fleet_id, owner, _treasury) = register_fleet(&env, &client);
 
     let driver = Address::generate(&env);
-    client.add_driver_to_fleet(&owner, &fleet_id, &driver);
+    client.add_driver_to_fleet(&owner, &fleet_id, &driver, &no_co_signers(&env));
     client.accept_fleet_invite(&fleet_id, &driver);
 
     // Driver removes themselves.
-    client.remove_driver_from_fleet(&fleet_id, &driver, &driver);
+    client.remove_driver_from_fleet(&fleet_id, &driver, &driver, &no_co_signers(&env));
 
     assert_eq!(
         client.get_driver_fleet_status(&fleet_id, &driver),
@@ -727,8 +736,8 @@ fn test_cancelled_invite_is_not_in_roster() {
     let (fleet_id, owner, _treasury) = register_fleet(&env, &client);
     let driver = Address::generate(&env);
 
-    client.add_driver_to_fleet(&owner, &fleet_id, &driver);
-    client.cancel_invite(&owner, &fleet_id, &driver);
+    client.add_driver_to_fleet(&owner, &fleet_id, &driver, &no_co_signers(&env));
+    client.cancel_invite(&owner, &fleet_id, &driver, &no_co_signers(&env));
 
     assert!(client.get_fleet_roster(&fleet_id).is_empty());
     assert_eq!(client.get_driver_fleet_status(&fleet_id, &driver), None);
@@ -740,12 +749,12 @@ fn test_roster_re_invite_after_removal() {
     let (fleet_id, owner, _treasury) = register_fleet(&env, &client);
 
     let driver = Address::generate(&env);
-    client.add_driver_to_fleet(&owner, &fleet_id, &driver);
+    client.add_driver_to_fleet(&owner, &fleet_id, &driver, &no_co_signers(&env));
     client.accept_fleet_invite(&fleet_id, &driver);
-    client.remove_driver_from_fleet(&fleet_id, &owner, &driver);
+    client.remove_driver_from_fleet(&fleet_id, &owner, &driver, &no_co_signers(&env));
 
     // Should be possible to invite the same driver again after removal.
-    client.add_driver_to_fleet(&owner, &fleet_id, &driver);
+    client.add_driver_to_fleet(&owner, &fleet_id, &driver, &no_co_signers(&env));
     assert_eq!(
         client.get_driver_fleet_status(&fleet_id, &driver),
         Some(DriverFleetStatus::Pending)
@@ -760,7 +769,7 @@ fn test_get_payout_address_returns_treasury_for_active_driver() {
     let (fleet_id, owner, treasury) = register_fleet(&env, &client);
 
     let driver = Address::generate(&env);
-    client.add_driver_to_fleet(&owner, &fleet_id, &driver);
+    client.add_driver_to_fleet(&owner, &fleet_id, &driver, &no_co_signers(&env));
     client.accept_fleet_invite(&fleet_id, &driver);
 
     let payout = client.get_payout_address(&driver, &fleet_id);
@@ -784,7 +793,7 @@ fn test_get_payout_address_returns_driver_for_pending_invite() {
     let (fleet_id, owner, _treasury) = register_fleet(&env, &client);
 
     let driver = Address::generate(&env);
-    client.add_driver_to_fleet(&owner, &fleet_id, &driver);
+    client.add_driver_to_fleet(&owner, &fleet_id, &driver, &no_co_signers(&env));
     // Invite is Pending — not yet accepted.
 
     let payout = client.get_payout_address(&driver, &fleet_id);
@@ -797,9 +806,9 @@ fn test_get_payout_address_returns_driver_after_removal() {
     let (fleet_id, owner, _treasury) = register_fleet(&env, &client);
 
     let driver = Address::generate(&env);
-    client.add_driver_to_fleet(&owner, &fleet_id, &driver);
+    client.add_driver_to_fleet(&owner, &fleet_id, &driver, &no_co_signers(&env));
     client.accept_fleet_invite(&fleet_id, &driver);
-    client.remove_driver_from_fleet(&fleet_id, &owner, &driver);
+    client.remove_driver_from_fleet(&fleet_id, &owner, &driver, &no_co_signers(&env));
 
     // After removal the driver should receive their own address.
     let payout = client.get_payout_address(&driver, &fleet_id);
@@ -812,7 +821,7 @@ fn test_get_payout_address_falls_back_when_fleet_profile_is_missing() {
     let (fleet_id, owner, _treasury) = register_fleet(&env, &client);
     let driver = Address::generate(&env);
 
-    client.add_driver_to_fleet(&owner, &fleet_id, &driver);
+    client.add_driver_to_fleet(&owner, &fleet_id, &driver, &no_co_signers(&env));
     client.accept_fleet_invite(&fleet_id, &driver);
 
     env.as_contract(&client.address, || {
@@ -909,11 +918,11 @@ fn test_get_payout_address_treasury_updates_are_reflected_after_confirmation() {
     let (fleet_id, owner, _old_treasury) = register_fleet(&env, &client);
 
     let driver = Address::generate(&env);
-    client.add_driver_to_fleet(&owner, &fleet_id, &driver);
+    client.add_driver_to_fleet(&owner, &fleet_id, &driver, &no_co_signers(&env));
     client.accept_fleet_invite(&fleet_id, &driver);
 
     let new_treasury = Address::generate(&env);
-    client.update_fleet_treasury(&owner, &fleet_id, &new_treasury);
+    client.update_fleet_treasury(&owner, &fleet_id, &new_treasury, &no_co_signers(&env));
     env.ledger()
         .set_timestamp(env.ledger().timestamp() + TREASURY_CHANGE_TIMELOCK_SECONDS);
     client.confirm_fleet_treasury_update(&fleet_id);
@@ -928,11 +937,11 @@ fn test_get_payout_address_uses_old_treasury_during_timelock_delay() {
     let (fleet_id, owner, old_treasury) = register_fleet(&env, &client);
 
     let driver = Address::generate(&env);
-    client.add_driver_to_fleet(&owner, &fleet_id, &driver);
+    client.add_driver_to_fleet(&owner, &fleet_id, &driver, &no_co_signers(&env));
     client.accept_fleet_invite(&fleet_id, &driver);
 
     let new_treasury = Address::generate(&env);
-    client.update_fleet_treasury(&owner, &fleet_id, &new_treasury);
+    client.update_fleet_treasury(&owner, &fleet_id, &new_treasury, &no_co_signers(&env));
 
     // Still within the timelock delay — payouts must keep routing to the
     // old treasury until the change is confirmed.
@@ -949,9 +958,9 @@ fn test_get_payout_address_multiple_drivers_same_fleet() {
     let driver_b = Address::generate(&env);
     let driver_c = Address::generate(&env);
 
-    client.add_driver_to_fleet(&owner, &fleet_id, &driver_a);
-    client.add_driver_to_fleet(&owner, &fleet_id, &driver_b);
-    client.add_driver_to_fleet(&owner, &fleet_id, &driver_c);
+    client.add_driver_to_fleet(&owner, &fleet_id, &driver_a, &no_co_signers(&env));
+    client.add_driver_to_fleet(&owner, &fleet_id, &driver_b, &no_co_signers(&env));
+    client.add_driver_to_fleet(&owner, &fleet_id, &driver_c, &no_co_signers(&env));
 
     // Only a and b accept; c stays pending.
     client.accept_fleet_invite(&fleet_id, &driver_a);
@@ -1006,6 +1015,14 @@ fn test_configure_signers_adds_multiple_signers() {
 
 #[test]
 fn test_signer_threshold_is_enforced_for_fleet_actions() {
+    // This test previously only asserted the *negative* case (a lone
+    // signer's authorization fails to meet threshold 2) and passed even
+    // though `require_signer_threshold`'s counting loop broke after the
+    // first matching signer — meaning threshold 2+ could never be
+    // satisfied by *any* call, a structural bug the negative-only
+    // assertions could never have caught. It now also asserts the
+    // positive case: supplying the required co-signer meets the threshold
+    // and the action actually succeeds.
     let (env, client, _admin) = setup_test();
 
     let owner = Address::generate(&env);
@@ -1013,29 +1030,114 @@ fn test_signer_threshold_is_enforced_for_fleet_actions() {
     let fleet_id = client.register_fleet(&owner, &treasury);
     let pending_driver = Address::generate(&env);
     let active_driver = Address::generate(&env);
-    client.add_driver_to_fleet(&owner, &fleet_id, &pending_driver);
-    client.add_driver_to_fleet(&owner, &fleet_id, &active_driver);
+    client.add_driver_to_fleet(&owner, &fleet_id, &pending_driver, &no_co_signers(&env));
+    client.add_driver_to_fleet(&owner, &fleet_id, &active_driver, &no_co_signers(&env));
     client.accept_fleet_invite(&fleet_id, &active_driver);
 
     let signer2 = Address::generate(&env);
     let mut signers = soroban_sdk::Vec::new(&env);
     signers.push_back(owner.clone());
-    signers.push_back(signer2);
+    signers.push_back(signer2.clone());
     client.configure_signers(&owner, &fleet_id, &signers, &2u32);
 
+    let mut co_signer2 = soroban_sdk::Vec::new(&env);
+    co_signer2.push_back(signer2.clone());
+
+    // Negative case: the primary caller alone does not meet threshold 2.
     let new_treasury = Address::generate(&env);
     assert!(client
-        .try_update_fleet_treasury(&owner, &fleet_id, &new_treasury)
+        .try_update_fleet_treasury(&owner, &fleet_id, &new_treasury, &no_co_signers(&env))
         .is_err());
     assert!(client
-        .try_add_driver_to_fleet(&owner, &fleet_id, &Address::generate(&env))
+        .try_add_driver_to_fleet(
+            &owner,
+            &fleet_id,
+            &Address::generate(&env),
+            &no_co_signers(&env)
+        )
         .is_err());
     assert!(client
-        .try_cancel_invite(&owner, &fleet_id, &pending_driver)
+        .try_cancel_invite(&owner, &fleet_id, &pending_driver, &no_co_signers(&env))
         .is_err());
     assert!(client
-        .try_remove_driver_from_fleet(&fleet_id, &owner, &active_driver)
+        .try_remove_driver_from_fleet(&fleet_id, &owner, &active_driver, &no_co_signers(&env))
         .is_err());
+
+    // Positive case: supplying `signer2` as a co-signer meets threshold 2
+    // and every action succeeds. Before the fix this was unreachable for
+    // *any* input, since the signer-counting loop broke after the first
+    // match and could never count past one.
+    client.update_fleet_treasury(&owner, &fleet_id, &new_treasury, &co_signer2);
+    let pending = client.get_pending_treasury_update(&fleet_id).unwrap();
+    assert_eq!(pending.treasury, new_treasury);
+
+    let new_driver = Address::generate(&env);
+    client.add_driver_to_fleet(&owner, &fleet_id, &new_driver, &co_signer2);
+    assert_eq!(
+        client.get_driver_fleet_status(&fleet_id, &new_driver),
+        Some(DriverFleetStatus::Pending)
+    );
+
+    client.cancel_invite(&owner, &fleet_id, &pending_driver, &co_signer2);
+    assert_eq!(
+        client.get_driver_fleet_status(&fleet_id, &pending_driver),
+        None
+    );
+
+    client.remove_driver_from_fleet(&fleet_id, &owner, &active_driver, &co_signer2);
+    assert_eq!(
+        client.get_driver_fleet_status(&fleet_id, &active_driver),
+        Some(DriverFleetStatus::Removed)
+    );
+}
+
+/// A co-signer who is authorized but not one of the fleet's configured
+/// signers contributes nothing to the threshold count, and duplicate
+/// addresses (the same co-signer repeated, or the primary caller repeated
+/// in `co_signers`) are only counted once — neither can be used to
+/// artificially inflate the count past the number of distinct real signers.
+#[test]
+fn test_signer_threshold_ignores_unconfigured_and_duplicate_signers() {
+    let (env, client, _admin) = setup_test();
+
+    let owner = Address::generate(&env);
+    let treasury = Address::generate(&env);
+    let fleet_id = client.register_fleet(&owner, &treasury);
+
+    let signer2 = Address::generate(&env);
+    let outsider = Address::generate(&env);
+    let mut signers = soroban_sdk::Vec::new(&env);
+    signers.push_back(owner.clone());
+    signers.push_back(signer2.clone());
+    client.configure_signers(&owner, &fleet_id, &signers, &2u32);
+
+    // Duplicating `owner` in co_signers must not double-count them.
+    let mut duplicate_owner = soroban_sdk::Vec::new(&env);
+    duplicate_owner.push_back(owner.clone());
+    duplicate_owner.push_back(owner.clone());
+    let new_treasury = Address::generate(&env);
+    assert!(client
+        .try_update_fleet_treasury(&owner, &fleet_id, &new_treasury, &duplicate_owner)
+        .is_err());
+
+    // An address not in `profile.signers` must not count toward the threshold.
+    let mut unconfigured = soroban_sdk::Vec::new(&env);
+    unconfigured.push_back(outsider);
+    assert!(client
+        .try_update_fleet_treasury(&owner, &fleet_id, &new_treasury, &unconfigured)
+        .is_err());
+
+    // The real second signer still works.
+    let mut real_co_signer = soroban_sdk::Vec::new(&env);
+    real_co_signer.push_back(signer2);
+    client.update_fleet_treasury(&owner, &fleet_id, &new_treasury, &real_co_signer);
+    assert_eq!(
+        client
+            .get_pending_treasury_update(&fleet_id)
+            .unwrap()
+            .treasury,
+        new_treasury
+    );
 }
 
 #[test]
@@ -1069,7 +1171,7 @@ fn test_update_fleet_treasury_with_authorized_signer() {
     let fleet_id = client.register_fleet(&owner, &treasury);
 
     let new_treasury = Address::generate(&env);
-    client.update_fleet_treasury(&owner, &fleet_id, &new_treasury);
+    client.update_fleet_treasury(&owner, &fleet_id, &new_treasury, &no_co_signers(&env));
 
     // update_fleet_treasury only proposes the change (Issue #70 timelock);
     // it must be confirmed after the timelock elapses to actually apply.
@@ -1092,7 +1194,8 @@ fn test_update_fleet_treasury_unauthorized_not_signer() {
     let attacker = Address::generate(&env);
     let new_treasury = Address::generate(&env);
 
-    let result = client.try_update_fleet_treasury(&attacker, &fleet_id, &new_treasury);
+    let result =
+        client.try_update_fleet_treasury(&attacker, &fleet_id, &new_treasury, &no_co_signers(&env));
     match result {
         Err(Ok(err)) => assert_eq!(err, FleetError::Unauthorized.into()),
         _ => panic!("Expected FleetError::Unauthorized"),
@@ -1115,7 +1218,7 @@ fn test_add_driver_authorized_signer_allowed() {
     client.configure_signers(&owner, &fleet_id, &new_signers, &1u32);
 
     let driver = Address::generate(&env);
-    client.add_driver_to_fleet(&signer2, &fleet_id, &driver);
+    client.add_driver_to_fleet(&signer2, &fleet_id, &driver, &no_co_signers(&env));
 
     let status = client.get_driver_fleet_status(&fleet_id, &driver);
     assert_eq!(status, Some(DriverFleetStatus::Pending));
@@ -1165,7 +1268,8 @@ fn test_add_driver_unauthorized_not_signer() {
     let attacker = Address::generate(&env);
     let driver = Address::generate(&env);
 
-    let result = client.try_add_driver_to_fleet(&attacker, &fleet_id, &driver);
+    let result =
+        client.try_add_driver_to_fleet(&attacker, &fleet_id, &driver, &no_co_signers(&env));
     match result {
         Err(Ok(err)) => assert_eq!(err, FleetError::Unauthorized.into()),
         _ => panic!("Expected FleetError::Unauthorized"),
@@ -1188,10 +1292,10 @@ fn test_remove_driver_by_authorized_signer() {
     client.configure_signers(&owner, &fleet_id, &new_signers, &1u32);
 
     let driver = Address::generate(&env);
-    client.add_driver_to_fleet(&owner, &fleet_id, &driver);
+    client.add_driver_to_fleet(&owner, &fleet_id, &driver, &no_co_signers(&env));
     client.accept_fleet_invite(&fleet_id, &driver);
 
-    client.remove_driver_from_fleet(&fleet_id, &signer2, &driver);
+    client.remove_driver_from_fleet(&fleet_id, &signer2, &driver, &no_co_signers(&env));
 
     let status = client.get_driver_fleet_status(&fleet_id, &driver);
     assert_eq!(status, Some(DriverFleetStatus::Removed));
@@ -1206,10 +1310,10 @@ fn test_remove_driver_not_signer_but_is_driver() {
     let fleet_id = client.register_fleet(&owner, &treasury);
 
     let driver = Address::generate(&env);
-    client.add_driver_to_fleet(&owner, &fleet_id, &driver);
+    client.add_driver_to_fleet(&owner, &fleet_id, &driver, &no_co_signers(&env));
     client.accept_fleet_invite(&fleet_id, &driver);
 
-    client.remove_driver_from_fleet(&fleet_id, &driver, &driver);
+    client.remove_driver_from_fleet(&fleet_id, &driver, &driver, &no_co_signers(&env));
 
     let status = client.get_driver_fleet_status(&fleet_id, &driver);
     assert_eq!(status, Some(DriverFleetStatus::Removed));
@@ -1249,7 +1353,7 @@ fn test_escrow_payout_routes_through_fleet_treasury() {
     let fleet_id = fleet_client.register_fleet(&fleet_owner, &fleet_treasury);
 
     let driver = Address::generate(&env);
-    fleet_client.add_driver_to_fleet(&fleet_owner, &fleet_id, &driver);
+    fleet_client.add_driver_to_fleet(&fleet_owner, &fleet_id, &driver, &no_co_signers(&env));
     fleet_client.accept_fleet_invite(&fleet_id, &driver);
     assert_eq!(
         fleet_client.get_driver_fleet_status(&fleet_id, &driver),
@@ -1321,7 +1425,7 @@ fn test_full_protocol_happy_path() {
     let fleet_record_id = fleet.register_fleet(&owner, &treasury);
     let driver = Address::generate(&env);
     identity.register_driver(&driver);
-    fleet.add_driver_to_fleet(&owner, &fleet_record_id, &driver);
+    fleet.add_driver_to_fleet(&owner, &fleet_record_id, &driver, &no_co_signers(&env));
     fleet.accept_fleet_invite(&fleet_record_id, &driver);
 
     let sender = Address::generate(&env);
@@ -1437,7 +1541,7 @@ fn test_add_driver_to_fleet_rejects_invite_on_deactivated_fleet() {
     let driver = Address::generate(&env);
 
     client.deactivate_fleet(&owner, &fleet_id);
-    client.add_driver_to_fleet(&owner, &fleet_id, &driver);
+    client.add_driver_to_fleet(&owner, &fleet_id, &driver, &no_co_signers(&env));
 }
 
 #[test]
@@ -1446,7 +1550,7 @@ fn test_get_payout_address_falls_back_to_driver_after_deactivation() {
     let (fleet_id, owner, treasury) = register_fleet(&env, &client);
     let driver = Address::generate(&env);
 
-    client.add_driver_to_fleet(&owner, &fleet_id, &driver);
+    client.add_driver_to_fleet(&owner, &fleet_id, &driver, &no_co_signers(&env));
     client.accept_fleet_invite(&fleet_id, &driver);
 
     // Active driver in an active fleet routes to the treasury.

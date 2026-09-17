@@ -40,6 +40,8 @@ export interface UpdateFleetTreasuryParams {
   owner: string;
   fleetId: bigint;
   treasury: string;
+  /** Additional signer authorizations needed to meet the fleet's signature_threshold beyond `owner` alone. Pass [] for a threshold-1 fleet. */
+  coSigners?: string[];
 }
 
 export interface ConfirmFleetTreasuryUpdateParams {
@@ -50,12 +52,16 @@ export interface AddDriverToFleetParams {
   caller: string;
   fleetId: bigint;
   driver: string;
+  /** Additional signer authorizations needed to meet the fleet's signature_threshold beyond `caller` alone. Pass [] for a threshold-1 fleet. */
+  coSigners?: string[];
 }
 
 export interface CancelInviteParams {
   owner: string;
   fleetId: bigint;
   driver: string;
+  /** Additional signer authorizations needed to meet the fleet's signature_threshold beyond `owner` alone. Pass [] for a threshold-1 fleet. */
+  coSigners?: string[];
 }
 
 export interface AcceptFleetInviteParams {
@@ -67,6 +73,8 @@ export interface RemoveDriverFromFleetParams {
   fleetId: bigint;
   caller: string;
   driver: string;
+  /** Additional signer authorizations needed to meet the fleet's signature_threshold beyond `caller` alone. Pass [] (or omit) when the driver is removing themselves. */
+  coSigners?: string[];
 }
 
 export interface ConfigureSignersParams {

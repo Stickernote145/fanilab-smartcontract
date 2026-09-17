@@ -41,17 +41,43 @@ fn require_escrow_not_paused(env: &Env) {
     }
 }
 
-/// Require that `caller` is one of the fleet's configured signers and that the
-/// fleet's `signature_threshold` is satisfiable by that single authorization.
-/// A caller who is not a signer, or a threshold that a lone signer cannot meet,
-/// is rejected with `FleetError::Unauthorized`.
-fn require_signer_threshold(env: &Env, profile: &FleetProfile, caller: &Address) {
+/// Require that `caller` plus `co_signers` together include at least
+/// `profile.signature_threshold` distinct addresses from the fleet's
+/// configured signer list, with every counted co-signer having
+/// independently authorized this transaction (`caller`'s own auth is the
+/// caller's responsibility, checked before this function runs).
+///
+/// Previously this only ever checked `caller` alone, so a threshold of 2+
+/// could never be satisfied by any single call and every fleet with
+/// `signature_threshold > 1` was permanently locked out of every
+/// signer-gated action. `co_signers` lets a caller submit the additional
+/// authorizations a multi-sig fleet actually needs in one transaction.
+/// Duplicates (whether `caller` repeated in `co_signers`, or the same
+/// address repeated within `co_signers`) are only counted once. A signer
+/// who is not in `profile.signers` contributes nothing to the count.
+fn require_signer_threshold(
+    env: &Env,
+    profile: &FleetProfile,
+    caller: &Address,
+    co_signers: &soroban_sdk::Vec<Address>,
+) {
+    let mut counted: soroban_sdk::Vec<Address> = soroban_sdk::Vec::new(env);
     let mut authorized_signer_count = 0u32;
-    for i in 0..profile.signers.len() {
-        if let Some(signer) = profile.signers.get(i) {
-            if signer == *caller {
+
+    if profile.signers.contains(caller) {
+        authorized_signer_count += 1;
+        counted.push_back(caller.clone());
+    }
+
+    for i in 0..co_signers.len() {
+        if let Some(signer) = co_signers.get(i) {
+            if counted.contains(&signer) {
+                continue;
+            }
+            if profile.signers.contains(&signer) {
+                signer.require_auth();
                 authorized_signer_count += 1;
-                break;
+                counted.push_back(signer);
             }
         }
     }
@@ -444,8 +470,17 @@ impl FleetManagementContract {
     /// advance notice (via the `fleet_treasury_change_proposed` event) before
     /// their future payouts are redirected. Proposing again before
     /// confirmation overwrites the pending change and restarts the timelock.
+    /// `co_signers` supplies any additional signer authorizations needed to
+    /// satisfy the fleet's `signature_threshold` beyond `owner` alone — pass
+    /// an empty vec for a threshold-1 fleet (the common case).
     #[allow(deprecated)] // events().publish() is deprecated in SDK 27.0.0 but still functional; tracked in SOROBAN_SDK_27_MIGRATION.md#event-system-migration (Issue #114)
-    pub fn update_fleet_treasury(env: Env, owner: Address, fleet_id: FleetId, treasury: Address) {
+    pub fn update_fleet_treasury(
+        env: Env,
+        owner: Address,
+        fleet_id: FleetId,
+        treasury: Address,
+        co_signers: soroban_sdk::Vec<Address>,
+    ) {
         owner.require_auth();
         require_escrow_not_paused(&env);
 
@@ -455,7 +490,7 @@ impl FleetManagementContract {
             .get(&DataKey::Fleet(fleet_id))
             .unwrap_or_else(|| panic_with_error!(&env, FleetError::FleetNotFound));
 
-        require_signer_threshold(&env, &profile, &owner);
+        require_signer_threshold(&env, &profile, &owner, &co_signers);
 
         let activates_at = env
             .ledger()
@@ -551,8 +586,17 @@ impl FleetManagementContract {
     /// `caller` must be an authorized signer and must sign the transaction.
     /// Stores a `Pending` invite for `driver` under this fleet.
     /// The driver must later call `accept_fleet_invite` to become active.
+    /// `co_signers` supplies any additional signer authorizations needed to
+    /// satisfy the fleet's `signature_threshold` beyond `caller` alone — pass
+    /// an empty vec for a threshold-1 fleet (the common case).
     #[allow(deprecated)] // events().publish() is deprecated in SDK 27.0.0 but still functional; tracked in SOROBAN_SDK_27_MIGRATION.md#event-system-migration (Issue #114)
-    pub fn add_driver_to_fleet(env: Env, caller: Address, fleet_id: FleetId, driver: Address) {
+    pub fn add_driver_to_fleet(
+        env: Env,
+        caller: Address,
+        fleet_id: FleetId,
+        driver: Address,
+        co_signers: soroban_sdk::Vec<Address>,
+    ) {
         caller.require_auth();
         require_escrow_not_paused(&env);
 
@@ -566,7 +610,7 @@ impl FleetManagementContract {
             panic_with_error!(&env, FleetError::FleetInactive);
         }
 
-        require_signer_threshold(&env, &profile, &caller);
+        require_signer_threshold(&env, &profile, &caller, &co_signers);
 
         let invite_key = DataKey::DriverFleet(fleet_id, driver.clone());
 
@@ -613,7 +657,16 @@ impl FleetManagementContract {
     /// Unlike `remove_driver_from_fleet` (bilateral severance of an already
     /// active relationship), this withdraws an invite the driver never
     /// accepted, clearing the slot so the driver can be re-invited immediately.
-    pub fn cancel_invite(env: Env, owner: Address, fleet_id: FleetId, driver: Address) {
+    /// `co_signers` supplies any additional signer authorizations needed to
+    /// satisfy the fleet's `signature_threshold` beyond `owner` alone — pass
+    /// an empty vec for a threshold-1 fleet (the common case).
+    pub fn cancel_invite(
+        env: Env,
+        owner: Address,
+        fleet_id: FleetId,
+        driver: Address,
+        co_signers: soroban_sdk::Vec<Address>,
+    ) {
         owner.require_auth();
         require_escrow_not_paused(&env);
 
@@ -623,7 +676,7 @@ impl FleetManagementContract {
             .get(&DataKey::Fleet(fleet_id))
             .unwrap_or_else(|| panic_with_error!(&env, FleetError::FleetNotFound));
 
-        require_signer_threshold(&env, &profile, &owner);
+        require_signer_threshold(&env, &profile, &owner, &co_signers);
 
         let invite_key = DataKey::DriverFleet(fleet_id, driver.clone());
         let status: DriverFleetStatus = env
@@ -722,8 +775,18 @@ impl FleetManagementContract {
     /// `caller` must be either an authorized signer or the driver being removed.
     /// Deletes the driver's fleet record and, if the driver was `Active`,
     /// decrements `total_active_drivers` on the fleet profile.
+    /// `co_signers` supplies any additional signer authorizations needed to
+    /// satisfy the fleet's `signature_threshold` beyond `caller` alone — pass
+    /// an empty vec for a threshold-1 fleet (the common case) or when the
+    /// driver is removing themselves (no signer threshold applies).
     #[allow(deprecated)] // events().publish() is deprecated in SDK 27.0.0 but still functional; tracked in SOROBAN_SDK_27_MIGRATION.md#event-system-migration (Issue #114)
-    pub fn remove_driver_from_fleet(env: Env, fleet_id: FleetId, caller: Address, driver: Address) {
+    pub fn remove_driver_from_fleet(
+        env: Env,
+        fleet_id: FleetId,
+        caller: Address,
+        driver: Address,
+        co_signers: soroban_sdk::Vec<Address>,
+    ) {
         let mut profile: FleetProfile = env
             .storage()
             .persistent()
@@ -737,7 +800,7 @@ impl FleetManagementContract {
         // Verify caller is authorised: must be either an authorized signer or the driver.
         let is_driver = caller == driver;
         if !is_driver {
-            require_signer_threshold(&env, &profile, &caller);
+            require_signer_threshold(&env, &profile, &caller, &co_signers);
         }
 
         let invite_key = DataKey::DriverFleet(fleet_id, driver.clone());

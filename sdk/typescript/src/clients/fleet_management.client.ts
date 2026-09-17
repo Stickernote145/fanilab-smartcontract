@@ -4,7 +4,7 @@
 
 import { ContractInvokeOptions, DriverFleetStatus, FleetProfile, PendingTreasuryChange } from '../types/common.types';
 import * as FleetManagementTypes from '../types/fleet_management.types';
-import { ContractInvoker, address, u32, u64 } from './invoker';
+import { ContractInvoker, address, u32, u64, vec } from './invoker';
 
 export class FleetManagementClient {
   private readonly invoker: ContractInvoker;
@@ -46,7 +46,7 @@ export class FleetManagementClient {
   }
 
   async updateFleetTreasury(params: FleetManagementTypes.UpdateFleetTreasuryParams, options?: ContractInvokeOptions): Promise<void> {
-    await this.invoker.call('update_fleet_treasury', [address(params.owner), u64(params.fleetId), address(params.treasury)], options);
+    await this.invoker.call('update_fleet_treasury', [address(params.owner), u64(params.fleetId), address(params.treasury), vec((params.coSigners ?? []).map(address))], options);
   }
 
   async confirmFleetTreasuryUpdate(params: FleetManagementTypes.ConfirmFleetTreasuryUpdateParams, options?: ContractInvokeOptions): Promise<void> {
@@ -59,11 +59,11 @@ export class FleetManagementClient {
   }
 
   async addDriverToFleet(params: FleetManagementTypes.AddDriverToFleetParams, options?: ContractInvokeOptions): Promise<void> {
-    await this.invoker.call('add_driver_to_fleet', [address(params.caller), u64(params.fleetId), address(params.driver)], options);
+    await this.invoker.call('add_driver_to_fleet', [address(params.caller), u64(params.fleetId), address(params.driver), vec((params.coSigners ?? []).map(address))], options);
   }
 
   async cancelInvite(params: FleetManagementTypes.CancelInviteParams, options?: ContractInvokeOptions): Promise<void> {
-    await this.invoker.call('cancel_invite', [address(params.owner), u64(params.fleetId), address(params.driver)], options);
+    await this.invoker.call('cancel_invite', [address(params.owner), u64(params.fleetId), address(params.driver), vec((params.coSigners ?? []).map(address))], options);
   }
 
   async acceptFleetInvite(params: FleetManagementTypes.AcceptFleetInviteParams, options?: ContractInvokeOptions): Promise<void> {
@@ -71,7 +71,7 @@ export class FleetManagementClient {
   }
 
   async removeDriverFromFleet(params: FleetManagementTypes.RemoveDriverFromFleetParams, options?: ContractInvokeOptions): Promise<void> {
-    await this.invoker.call('remove_driver_from_fleet', [u64(params.fleetId), address(params.caller), address(params.driver)], options);
+    await this.invoker.call('remove_driver_from_fleet', [u64(params.fleetId), address(params.caller), address(params.driver), vec((params.coSigners ?? []).map(address))], options);
   }
 
   async getPayoutAddress(driver: string, fleetId: bigint, options?: ContractInvokeOptions): Promise<string> {

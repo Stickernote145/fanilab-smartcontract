@@ -1,6 +1,5 @@
 #![no_std]
 
-use identity_reputation_contract::IdentityReputationContractClient;
 use shared_types::FaniLabError;
 use shared_types::{
     delivery_key, events, is_admin, ttl, DeliveryConfirmedEvent, DeliveryCreatedEvent,
@@ -780,7 +779,11 @@ impl DeliveryContract {
             .instance()
             .get(&DataKey::IdentityReputationContract)
             .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::NotInitialized));
-        IdentityReputationContractClient::new(&env, &identity_contract).get_driver_profile(&driver)
+        env.invoke_contract(
+            &identity_contract,
+            &Symbol::new(&env, "get_driver_profile"),
+            soroban_sdk::vec![&env, driver.into_val(&env)],
+        )
     }
 
     pub fn get_delivery(env: Env, delivery_id: DeliveryId) -> DeliveryRecord {

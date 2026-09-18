@@ -13,8 +13,6 @@ use soroban_sdk::{
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-pub type FleetId = u64;
-
 /// Maximum number of drivers per fleet roster to prevent unbounded storage growth.
 pub const MAX_ROSTER_SIZE: u32 = 10000;
 
@@ -118,7 +116,7 @@ pub enum DriverFleetStatus {
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FleetProfile {
-    pub fleet_id: FleetId,
+    pub fleet_id: u64,
     pub owner: Address,
     pub treasury: Address,
     pub total_active_drivers: u32,
@@ -152,13 +150,13 @@ pub enum DataKey {
     /// Persistent key — monotonically incrementing fleet counter.
     FleetCounter,
     /// Persistent key — fleet profile keyed by fleet id.
-    Fleet(FleetId),
+    Fleet(u64),
     /// Persistent key — driver's status within a fleet (Pending | Active).
-    DriverFleet(FleetId, Address),
+    DriverFleet(u64, Address),
     /// Persistent key — one active roster entry, keyed by fleet and index.
-    FleetRoster(FleetId, u32),
+    FleetRoster(u64, u32),
     /// Persistent key — pending, not-yet-confirmed treasury change for a fleet.
-    PendingTreasury(FleetId),
+    PendingTreasury(u64),
 }
 
 // ── Contract ──────────────────────────────────────────────────────────────────
@@ -213,7 +211,7 @@ impl FleetManagementContract {
     /// If an identity contract is configured, automatically creates an identity
     /// profile for the owner via a cross-contract call.
     #[allow(deprecated)] // events().publish() is deprecated in SDK 27.0.0 but still functional; tracked in SOROBAN_SDK_27_MIGRATION.md#event-system-migration (Issue #114)
-    pub fn register_fleet(env: Env, owner: Address, treasury: Address) -> FleetId {
+    pub fn register_fleet(env: Env, owner: Address, treasury: Address) -> u64 {
         owner.require_auth();
         require_escrow_not_paused(&env);
 
@@ -225,7 +223,7 @@ impl FleetManagementContract {
             .get(&counter_key)
             .unwrap_or_else(|| panic_with_error!(&env, FleetError::NotInitialized));
 
-        let fleet_id: FleetId = current + 1;
+        let fleet_id: u64 = current + 1;
         env.storage().persistent().set(&counter_key, &fleet_id);
 
         // Build and store the fleet profile with single-owner multi-sig (backward compatible).
@@ -286,7 +284,7 @@ impl FleetManagementContract {
 
     /// Return the stored profile for a fleet.  Panics with `FleetNotFound` when
     /// no fleet with that id exists.
-    pub fn get_fleet(env: Env, fleet_id: FleetId) -> FleetProfile {
+    pub fn get_fleet(env: Env, fleet_id: u64) -> FleetProfile {
         env.storage()
             .persistent()
             .get(&DataKey::Fleet(fleet_id))
@@ -304,7 +302,7 @@ impl FleetManagementContract {
     /// place rather than auto-removed; they may be individually removed via
     /// `remove_driver_from_fleet` if desired.
     #[allow(deprecated)] // events().publish() is deprecated in SDK 27.0.0 but still functional; tracked in SOROBAN_SDK_27_MIGRATION.md#event-system-migration (Issue #114)
-    pub fn deactivate_fleet(env: Env, caller: Address, fleet_id: FleetId) {
+    pub fn deactivate_fleet(env: Env, caller: Address, fleet_id: u64) {
         caller.require_auth();
         require_escrow_not_paused(&env);
 
@@ -350,12 +348,7 @@ impl FleetManagementContract {
     ///   multi-sig configuration the admin (or the new owner) can restore it
     ///   via `configure_signers` after recovery.
     #[allow(deprecated)] // events().publish() is deprecated in SDK 27.0.0 but still functional; tracked in SOROBAN_SDK_27_MIGRATION.md#event-system-migration (Issue #114)
-    pub fn admin_reassign_fleet_owner(
-        env: Env,
-        admin: Address,
-        fleet_id: FleetId,
-        new_owner: Address,
-    ) {
+    pub fn admin_reassign_fleet_owner(env: Env, admin: Address, fleet_id: u64, new_owner: Address) {
         admin.require_auth();
 
         if !is_admin(&env, &admin) {
@@ -417,7 +410,7 @@ impl FleetManagementContract {
     pub fn admin_force_update_treasury(
         env: Env,
         admin: Address,
-        fleet_id: FleetId,
+        fleet_id: u64,
         new_treasury: Address,
     ) {
         admin.require_auth();
@@ -477,7 +470,7 @@ impl FleetManagementContract {
     pub fn update_fleet_treasury(
         env: Env,
         owner: Address,
-        fleet_id: FleetId,
+        fleet_id: u64,
         treasury: Address,
         co_signers: soroban_sdk::Vec<Address>,
     ) {
@@ -527,7 +520,7 @@ impl FleetManagementContract {
     /// caller identity, matching `reclaim_expired_escrow`'s permissionless
     /// finalization pattern.
     #[allow(deprecated)] // events().publish() is deprecated in SDK 27.0.0 but still functional; tracked in SOROBAN_SDK_27_MIGRATION.md#event-system-migration (Issue #114)
-    pub fn confirm_fleet_treasury_update(env: Env, fleet_id: FleetId) {
+    pub fn confirm_fleet_treasury_update(env: Env, fleet_id: u64) {
         require_escrow_not_paused(&env);
         let pending_key = DataKey::PendingTreasury(fleet_id);
         let pending: PendingTreasuryChange = env
@@ -570,10 +563,7 @@ impl FleetManagementContract {
     /// Return the pending treasury change for a fleet, if any, so off-chain
     /// clients (e.g. driver apps) can display the upcoming payout redirect
     /// and its activation time.
-    pub fn get_pending_treasury_update(
-        env: Env,
-        fleet_id: FleetId,
-    ) -> Option<PendingTreasuryChange> {
+    pub fn get_pending_treasury_update(env: Env, fleet_id: u64) -> Option<PendingTreasuryChange> {
         env.storage()
             .persistent()
             .get(&DataKey::PendingTreasury(fleet_id))
@@ -593,7 +583,7 @@ impl FleetManagementContract {
     pub fn add_driver_to_fleet(
         env: Env,
         caller: Address,
-        fleet_id: FleetId,
+        fleet_id: u64,
         driver: Address,
         co_signers: soroban_sdk::Vec<Address>,
     ) {
@@ -663,7 +653,7 @@ impl FleetManagementContract {
     pub fn cancel_invite(
         env: Env,
         owner: Address,
-        fleet_id: FleetId,
+        fleet_id: u64,
         driver: Address,
         co_signers: soroban_sdk::Vec<Address>,
     ) {
@@ -698,7 +688,7 @@ impl FleetManagementContract {
     /// transaction.  Transitions status from `Pending` → `Active` and
     /// increments `total_active_drivers` on the fleet profile.
     #[allow(deprecated)] // events().publish() is deprecated in SDK 27.0.0 but still functional; tracked in SOROBAN_SDK_27_MIGRATION.md#event-system-migration (Issue #114)
-    pub fn accept_fleet_invite(env: Env, fleet_id: FleetId, driver: Address) {
+    pub fn accept_fleet_invite(env: Env, fleet_id: u64, driver: Address) {
         // Driver must authorise.
         driver.require_auth();
         require_escrow_not_paused(&env);
@@ -782,7 +772,7 @@ impl FleetManagementContract {
     #[allow(deprecated)] // events().publish() is deprecated in SDK 27.0.0 but still functional; tracked in SOROBAN_SDK_27_MIGRATION.md#event-system-migration (Issue #114)
     pub fn remove_driver_from_fleet(
         env: Env,
-        fleet_id: FleetId,
+        fleet_id: u64,
         caller: Address,
         driver: Address,
         co_signers: soroban_sdk::Vec<Address>,
@@ -883,7 +873,7 @@ impl FleetManagementContract {
     /// Returns the fleet's treasury if the driver is an active member of that
     /// fleet, otherwise returns the driver's own address.
     #[allow(deprecated)]
-    pub fn get_payout_address(env: Env, driver: Address, fleet_id: FleetId) -> Address {
+    pub fn get_payout_address(env: Env, driver: Address, fleet_id: u64) -> Address {
         let status: Option<DriverFleetStatus> = env
             .storage()
             .persistent()
@@ -918,7 +908,7 @@ impl FleetManagementContract {
     /// exists.  Useful for off-chain queries and integration tests.
     pub fn get_driver_fleet_status(
         env: Env,
-        fleet_id: FleetId,
+        fleet_id: u64,
         driver: Address,
     ) -> Option<DriverFleetStatus> {
         env.storage()
@@ -928,7 +918,7 @@ impl FleetManagementContract {
 
     /// Return the roster of all active drivers for a fleet.
     /// Returns an empty Vec if no drivers are active in the fleet.
-    pub fn get_fleet_roster(env: Env, fleet_id: FleetId) -> soroban_sdk::Vec<Address> {
+    pub fn get_fleet_roster(env: Env, fleet_id: u64) -> soroban_sdk::Vec<Address> {
         let mut roster = soroban_sdk::Vec::new(&env);
         let active_count = env
             .storage()
@@ -956,7 +946,7 @@ impl FleetManagementContract {
     pub fn configure_signers(
         env: Env,
         owner: Address,
-        fleet_id: FleetId,
+        fleet_id: u64,
         signers: soroban_sdk::Vec<Address>,
         threshold: u32,
     ) {
@@ -995,7 +985,7 @@ impl FleetManagementContract {
     }
 
     /// Get the signers and threshold for a fleet.
-    pub fn get_fleet_signers(env: Env, fleet_id: FleetId) -> (soroban_sdk::Vec<Address>, u32) {
+    pub fn get_fleet_signers(env: Env, fleet_id: u64) -> (soroban_sdk::Vec<Address>, u32) {
         let profile: FleetProfile = env
             .storage()
             .persistent()

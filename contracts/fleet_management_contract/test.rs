@@ -52,10 +52,7 @@ fn setup_test() -> (Env, FleetManagementContractClient<'static>, Address) {
 }
 
 /// Helper: register a fleet and return (fleet_id, owner, treasury).
-fn register_fleet(
-    env: &Env,
-    client: &FleetManagementContractClient,
-) -> (FleetId, Address, Address) {
+fn register_fleet(env: &Env, client: &FleetManagementContractClient) -> (u64, Address, Address) {
     let owner = Address::generate(env);
     let treasury = Address::generate(env);
     let fleet_id = client.register_fleet(&owner, &treasury);

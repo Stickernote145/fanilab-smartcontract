@@ -17,5 +17,61 @@ Cargo.lock
 
 # Soroban test snapshots
 test_snapshots/
+**/test_snapshots/
+
 # proptest failure-seed files
 **/proptest-regressions/
+
+# ── TypeScript SDK ────────────────────────────────────────────────────────────
+
+# Build output
+sdk/typescript/dist/
+
+# Dependencies (committed lock file is kept; node_modules are not)
+sdk/typescript/node_modules/
+
+# Jest test snapshots
+sdk/typescript/**/__snapshots__/
+sdk/typescript/**/*.snap
+
+# TypeScript build info caches
+sdk/typescript/tsconfig.tsbuildinfo
+sdk/typescript/*.tsbuildinfo
+
+# ── Environment / Secrets ─────────────────────────────────────────────────────
+
+# Local environment overrides (the committed .env.example is fine)
+.env
+.env.local
+.env.*.local
+
+# ── Editor / IDE ──────────────────────────────────────────────────────────────
+
+# JetBrains IDEs (IntelliJ, CLion, etc.)
+.idea/
+
+# Vim swap / backup files
+*.swp
+*.swo
+*~
+
+# macOS filesystem metadata
+.DS_Store
+
+# Windows filesystem metadata
+Thumbs.db
+desktop.ini
+
+# ── Misc generated files ──────────────────────────────────────────────────────
+
+# Coverage reports
+lcov.info
+coverage/
+*.profraw
+*.profdata
+
+# Compiled WASM artifacts placed outside target/ by custom scripts
+*.wasm
+
+# Log files
+*.log

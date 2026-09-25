@@ -145,6 +145,24 @@ impl IdentityReputationContract {
         if !is_admin(&env, &admin) {
             panic_with_error!(&env, FaniLabError::Unauthorized);
         }
+
+        // Upper-bound validation: each point field must not exceed MAX_REPUTATION.
+        // A single-delivery point award above MAX_REPUTATION is nonsensical — it
+        // would allow one delivery to pin any driver at the tier ceiling,
+        // destroying reputation scaling economics (Issue #391).
+        if config.base_points > MAX_REPUTATION
+            || config.heavy_cargo_points > MAX_REPUTATION
+            || config.fragile_points > MAX_REPUTATION
+        {
+            panic_with_error!(&env, FaniLabError::InvalidState);
+        }
+
+        // Lower-bound validation: zero-point awards are no-ops and indicate a
+        // misconfigured transaction rather than intentional policy.
+        if config.base_points == 0 {
+            panic_with_error!(&env, FaniLabError::InvalidState);
+        }
+
         env.storage()
             .instance()
             .set(&DataKey::ReputationConfig, &config);
@@ -427,6 +445,7 @@ impl IdentityReputationContract {
     /// The resulting score is still capped at `MAX_REPUTATION`.
     #[allow(deprecated)] // events().publish() is deprecated in SDK 27.0.0 but still functional; tracked in SOROBAN_SDK_27_MIGRATION.md#event-system-migration (Issue #114)
     pub fn award_reputation(env: Env, caller: Address, driver: Address, points: u32) {
+        require_escrow_not_paused(&env);
         if !Self::is_authorized_contract(env.clone(), caller.clone()) {
             panic_with_error!(&env, FaniLabError::Unauthorized);
         }

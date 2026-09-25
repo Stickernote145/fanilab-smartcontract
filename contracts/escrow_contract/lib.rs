@@ -1786,6 +1786,15 @@ impl EscrowContract {
             .unwrap_or_else(|| panic_with_error!(env, EscrowError::DeliveryNotFound))
     }
 
+    /// Returns `true` if an escrow record exists for the given delivery ID,
+    /// `false` otherwise.  Never panics for an unknown ID.  No authorization
+    /// is required.  Use this to check presence before calling `get_escrow`
+    /// if you want to avoid the panic that accessor raises for missing records
+    /// (Issue #312).
+    pub fn has_escrow(env: Env, delivery_id: u64) -> bool {
+        env.storage().persistent().has(&escrow_key(delivery_id))
+    }
+
     #[allow(deprecated)] // events().publish() is deprecated in SDK 27.0.0 but still functional; tracked in SOROBAN_SDK_27_MIGRATION.md#event-system-migration (Issue #114)
     pub fn freeze_funds(env: Env, caller: Address, delivery_id: u64) {
         caller.require_auth();

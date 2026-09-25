@@ -66,6 +66,11 @@ pub enum DataKey {
     DeliveryIndex(Address, u32, u32),
     DeliveryIndexLen(Address, u32),
     IdentityReputationContract,
+    /// When `true`, `assign_driver` requires the driver to have
+    /// `kyc_verified = true` in the identity contract before assignment is
+    /// permitted.  Defaults to `false` so existing deployments and test
+    /// fixtures continue to work unchanged (Issue #314).
+    RequireKyc,
 }
 
 const INDEX_PAGE: u32 = 64;
@@ -218,6 +223,53 @@ impl DeliveryContract {
         env.storage()
             .instance()
             .get(&DataKey::IdentityReputationContract)
+    }
+
+    /// Enable or disable the KYC gate on `assign_driver` (Issue #314).
+    ///
+    /// When `required` is `true`, every subsequent call to `assign_driver`
+    /// will cross-call `identity_reputation_contract::get_driver_profile` and
+    /// reject drivers whose `kyc_verified` field is `false` or who have no
+    /// profile at all.
+    ///
+    /// When `required` is `false` (the default) KYC is not checked and
+    /// existing flows are unaffected.  The default allows existing test
+    /// fixtures and testnet deployments to keep working without changes.
+    ///
+    /// The gate is silently skipped when no identity contract is configured,
+    /// matching the optional-integration pattern used by reputation calls,
+    /// so deployments that have not wired up the identity contract continue
+    /// to work even when this flag is `true`.
+    ///
+    /// **Authorization:** Admin only.
+    #[allow(deprecated)] // events().publish() deprecated in SDK 27; see SOROBAN_SDK_27_MIGRATION.md
+    pub fn set_require_kyc(env: Env, admin: Address, required: bool) {
+        admin.require_auth();
+        let stored_admin: Address = env
+            .storage()
+            .instance()
+            .get(&StorageKey::Admin)
+            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::NotInitialized));
+        if admin != stored_admin {
+            panic_with_error!(&env, FaniLabError::Unauthorized);
+        }
+        env.storage()
+            .instance()
+            .set(&DataKey::RequireKyc, &required);
+        env.events().publish(
+            (Symbol::new(&env, "require_kyc_updated"),),
+            (admin, required),
+        );
+    }
+
+    /// Returns the current KYC-enforcement setting.  `true` means
+    /// `assign_driver` rejects unverified drivers; `false` (default) means
+    /// the gate is disabled (Issue #314).
+    pub fn get_require_kyc(env: Env) -> bool {
+        env.storage()
+            .instance()
+            .get(&DataKey::RequireKyc)
+            .unwrap_or(false)
     }
 
     /// Returns the escrow_contract address this delivery_contract was
@@ -542,6 +594,38 @@ impl DeliveryContract {
 
         validate_transition(delivery.status, DeliveryStatus::Active)
             .unwrap_or_else(|_| panic_with_error!(&env, FaniLabError::InvalidState));
+
+        // Issue #314: when `require_kyc` is enabled and the identity contract
+        // is configured, verify that the driver's profile exists and that
+        // `kyc_verified == true` before proceeding.  The gate is skipped
+        // when the identity contract is absent so deployments that have not
+        // wired it up continue to work even with the flag set.
+        let require_kyc: bool = env
+            .storage()
+            .instance()
+            .get(&DataKey::RequireKyc)
+            .unwrap_or(false);
+        if require_kyc {
+            if let Some(identity_contract) = Self::get_identity_reputation_contract(env.clone()) {
+                // `has_driver_profile` is a non-panicking presence check.
+                let has_profile: bool = env.invoke_contract(
+                    &identity_contract,
+                    &Symbol::new(&env, "has_driver_profile"),
+                    soroban_sdk::vec![&env, driver.clone().into_val(&env)],
+                );
+                if !has_profile {
+                    panic_with_error!(&env, FaniLabError::ProviderNotFound);
+                }
+                let profile: DriverProfile = env.invoke_contract(
+                    &identity_contract,
+                    &Symbol::new(&env, "get_driver_profile"),
+                    soroban_sdk::vec![&env, driver.clone().into_val(&env)],
+                );
+                if !profile.kyc_verified {
+                    panic_with_error!(&env, FaniLabError::Unauthorized);
+                }
+            }
+        }
 
         delivery.driver = Some(driver.clone());
         delivery.status = DeliveryStatus::Active;

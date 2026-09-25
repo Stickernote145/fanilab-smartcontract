@@ -15,7 +15,35 @@ Cargo.lock
 *.lib
 *.rsp
 
-# Soroban test snapshots
-test_snapshots/
+# Soroban / Stellar CLI artifacts
+**/.soroban/
+*.wasm
+
+# Test snapshots (soroban snapshot directories)
+**/test_snapshots/
+**/__snapshots__/
+
 # proptest failure-seed files
 **/proptest-regressions/
+
+# Editor / IDE files
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+*~
+
+# OS metadata
+.DS_Store
+Thumbs.db
+
+# Node.js (TypeScript SDK)
+node_modules/
+sdk/typescript/dist/
+sdk/typescript/coverage/
+sdk/typescript/*.tsbuildinfo
+
+# Environment files with secrets
+.env
+.env.local
+.env.*.local

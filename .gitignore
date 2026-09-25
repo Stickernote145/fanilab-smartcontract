@@ -19,3 +19,50 @@ Cargo.lock
 test_snapshots/
 # proptest failure-seed files
 **/proptest-regressions/
+
+# OS-generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+desktop.ini
+
+# Editor and IDE files
+.idea/
+.vscode/*.log
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+
+# Environment and secrets
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+*.cert
+
+# Node.js (sdk/typescript)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# WASM build artifacts (generated, not source)
+*.wasm
+
+# Soroban CLI artifacts
+*.stellar
+.soroban/
+
+# Temporary and log files
+*.log
+*.tmp
+*.temp
+/tmp/

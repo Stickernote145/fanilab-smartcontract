@@ -251,6 +251,14 @@ impl DeliveryContract {
             ensure_user_profile(&env, &identity_contract, &sender);
         }
 
+        // Extend instance TTL on every delivery creation so the protocol's
+        // core configuration pointers (Admin, EscrowContract,
+        // IdentityReputationContract) cannot be archived while the contract is
+        // actively used (Issue #393).
+        env.storage()
+            .instance()
+            .extend_ttl(ttl::LEDGER_TTL_THRESHOLD, ttl::LEDGER_TTL_EXTEND_TO);
+
         let mut counter: u64 = env
             .storage()
             .persistent()
@@ -333,6 +341,10 @@ impl DeliveryContract {
     ) -> soroban_sdk::Vec<DeliveryId> {
         sender.require_auth();
         require_escrow_not_paused(&env);
+
+        if sender == recipient {
+            panic_with_error!(&env, DeliveryError::InvalidParties);
+        }
 
         if metadata_list.len() > MAX_BATCH_SIZE {
             panic_with_error!(&env, DeliveryError::BatchTooLarge);
@@ -552,6 +564,13 @@ impl DeliveryContract {
             ttl::LEDGER_TTL_THRESHOLD,
             ttl::LEDGER_TTL_EXTEND_TO,
         );
+
+        // Extend instance TTL on every driver assignment so the protocol's
+        // core configuration pointers cannot be archived while the contract
+        // is actively used (Issue #393).
+        env.storage()
+            .instance()
+            .extend_ttl(ttl::LEDGER_TTL_THRESHOLD, ttl::LEDGER_TTL_EXTEND_TO);
 
         env.events().publish(
             (events::driver_assigned(&env),),
@@ -795,11 +814,18 @@ impl DeliveryContract {
     }
 
     /// Returns combined delivery and escrow state, and flags known-invalid combinations.
-    /// Validates that delivery and escrow states are synchronized according to protocol invariants.
+    ///
+    /// The escrow component is `None` when the escrow has not been created yet
+    /// (i.e. the delivery is in `Pending` state and the sender has not funded it).
+    /// Callers must handle the `None` case — it is a normal condition for freshly
+    /// created deliveries, not an error (Issue #395).
+    ///
+    /// `is_synchronized` is `false` whenever the escrow is absent, since an
+    /// unfunded delivery is not yet in a fully synchronized protocol state.
     pub fn get_combined_state(
         env: Env,
         delivery_id: DeliveryId,
-    ) -> (DeliveryRecord, shared_types::EscrowRecord, bool) {
+    ) -> (DeliveryRecord, Option<shared_types::EscrowRecord>, bool) {
         let delivery = Self::get_delivery(env.clone(), delivery_id);
 
         let escrow_address: Address = env
@@ -808,7 +834,22 @@ impl DeliveryContract {
             .get(&DataKey::EscrowContract)
             .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::NotInitialized));
 
+        // Check whether the escrow record exists before fetching it. A delivery
+        // in Pending state may not have a corresponding escrow yet — that is a
+        // valid protocol state, not a bug, so we must not panic here (Issue #395).
         use soroban_sdk::IntoVal;
+        let escrow_exists: bool = env.invoke_contract(
+            &escrow_address,
+            &Symbol::new(&env, "has_escrow"),
+            soroban_sdk::vec![&env, u64::from(delivery_id).into_val(&env)],
+        );
+
+        if !escrow_exists {
+            // No escrow yet — return None; the delivery and escrow states are
+            // not synchronized by definition.
+            return (delivery, None, false);
+        }
+
         let escrow: shared_types::EscrowRecord = env.invoke_contract(
             &escrow_address,
             &Symbol::new(&env, "get_escrow"),
@@ -816,7 +857,7 @@ impl DeliveryContract {
         );
 
         let is_synchronized = Self::validate_state_sync(&delivery, &escrow);
-        (delivery, escrow, is_synchronized)
+        (delivery, Some(escrow), is_synchronized)
     }
 
     /// Validates that delivery and escrow states match expected protocol invariants.

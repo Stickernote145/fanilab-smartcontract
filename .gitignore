@@ -15,7 +15,20 @@ Cargo.lock
 *.lib
 *.rsp
 
-# Soroban test snapshots
+# Soroban test snapshots (auto-generated during cargo test, not source)
+**/test_snapshots/
 test_snapshots/
+
 # proptest failure-seed files
 **/proptest-regressions/
+
+# Environment / secrets (use .env.example for templates)
+.env
+.env.local
+.env.*.local
+
+# Compiled Soroban WASM output (artifacts are built, not committed)
+*.wasm
+
+# macOS metadata
+.DS_Store

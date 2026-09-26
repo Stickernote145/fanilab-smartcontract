@@ -392,3 +392,6 @@ Built with ❤️ by the FaniLab Team | Powered by Stellar Soroban
 
 <!-- handsoff-issue-432 -->
 - #432: `escrow_contract` persistent storage mutation of `DataKey::TotalLocked` misses `extend_ttl`, causing silent tracking expiration
+
+<!-- handsoff-issue-433 -->
+- #433: `escrow_contract` persistent storage mutations of `DataKey::EscrowIndex` and `DataKey::EscrowIndexLen` miss `extend_ttl`, causing silent query history truncation

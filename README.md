@@ -387,3 +387,8 @@ This project is licensed under the MIT License - see the `LICENSE` file for deta
 ---
 
 Built with ❤️ by the FaniLab Team | Powered by Stellar Soroban
+
+## Handsoff notes
+
+<!-- handsoff-issue-416 -->
+- #416: `escrow_contract` missing empty batch regression test

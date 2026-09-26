@@ -387,3 +387,8 @@ This project is licensed under the MIT License - see the `LICENSE` file for deta
 ---
 
 Built with ❤️ by the FaniLab Team | Powered by Stellar Soroban
+
+## Handsoff notes
+
+<!-- handsoff-issue-432 -->
+- #432: `escrow_contract` persistent storage mutation of `DataKey::TotalLocked` misses `extend_ttl`, causing silent tracking expiration

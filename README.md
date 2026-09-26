@@ -398,3 +398,6 @@ Built with ❤️ by the FaniLab Team | Powered by Stellar Soroban
 
 <!-- handsoff-issue-418 -->
 - #418: `delivery_contract` missing contract test coverage for `get_deliveries_page`
+
+<!-- handsoff-issue-419 -->
+- #419: `escrow_contract` missing contract test coverage for `get_escrows_page`

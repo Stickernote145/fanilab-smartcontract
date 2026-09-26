@@ -439,7 +439,7 @@ impl IdentityReputationContract {
             .get(&key)
             .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::ProviderNotFound));
 
-        profile.reputation_score = (profile.reputation_score + points).min(MAX_REPUTATION);
+        profile.reputation_score = profile.reputation_score.saturating_add(points).min(MAX_REPUTATION);
 
         env.storage().persistent().set(&key, &profile);
         env.storage().persistent().extend_ttl(

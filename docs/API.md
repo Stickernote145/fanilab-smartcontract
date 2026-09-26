@@ -576,6 +576,144 @@ escrow_contract.resolve_dispute_split(
 );
 ```
 
+#### `mark_holdback_escrow`
+Transition a `Locked` escrow into `Holdback` after the recipient has confirmed delivery.
+
+This is called automatically by `delivery_contract::confirm_delivery` — the escrow is
+not released immediately; instead it enters a short holdback window so the recipient
+may still raise a dispute before the driver collects the funds.
+
+**Parameters:**
+- `caller: Address` - Recipient (must sign)
+- `delivery_id: u64` - Delivery identifier
+
+**Authorization:** Recipient only
+
+**Errors:**
+- `Unauthorized` - Caller is not the recipient
+- `InvalidState` - Escrow is not in `Locked` state
+
+**Events:** `escrow_holdback_marked`
+
+**State Changes:**
+- Sets escrow status to `Holdback`
+- Records `holdback_started_at` timestamp (used by `release_expired_holdback`)
+
+**Example:**
+```rust
+escrow_contract.mark_holdback_escrow(&recipient, &delivery_id);
+```
+
+#### `release_holdback_escrow`
+Release a `Holdback` escrow to the driver. Called by the recipient once they are
+satisfied, or by an admin as a recovery path.
+
+**Parameters:**
+- `caller: Address` - Recipient or admin
+- `delivery_id: u64` - Delivery identifier
+
+**Authorization:** Recipient or Admin
+
+**Errors:**
+- `Unauthorized` - Caller is not the recipient or admin
+- `InvalidState` - Escrow is not in `Holdback` state
+- `InsufficientFunds` - Contract balance is insufficient
+
+**Events:** `escrow_released`
+
+**State Changes:**
+- Transfers `(amount − platform_fee)` to driver (or fleet treasury if fleet-linked)
+- Transfers `platform_fee` to admin
+- Sets escrow status to `Released`
+
+**Example:**
+```rust
+escrow_contract.release_holdback_escrow(&recipient, &delivery_id);
+```
+
+#### `release_expired_holdback`
+Permissionless counterpart to `release_holdback_escrow`. Once an escrow has sat in
+`Holdback` for at least `get_holdback_window()` seconds since `mark_holdback_escrow`
+set `holdback_started_at`, **anyone** may call this to settle it to the driver.
+
+Without this escape hatch, a non-responsive recipient who never calls
+`release_holdback_escrow` (and raises no dispute) could strand the driver's funds in
+`Holdback` indefinitely, since the only other exits require recipient or admin action.
+(Issue #192)
+
+A `Paused` escrow (frozen via `freeze_funds` / `raise_dispute`) is unaffected — this
+function only accepts `Holdback`; a frozen escrow remains under admin arbitration.
+
+**Parameters:**
+- `delivery_id: u64` - Delivery identifier
+
+**Authorization:** Permissionless (any caller)
+
+**Errors:**
+- `InvalidState` - Escrow is not in `Holdback`, or `holdback_started_at` is missing
+- `TimelockNotElapsed` - The holdback window has not yet expired
+- `InsufficientFunds` - Contract balance is insufficient
+
+**Events:** `holdback_expired_released`
+
+**State Changes:**
+- Same as `release_holdback_escrow`: transfers funds to driver, fee to admin,
+  sets status to `Released`
+
+**Example:**
+```rust
+// After the holdback window has passed, anyone may call:
+escrow_contract.release_expired_holdback(&delivery_id);
+```
+
+#### `set_holdback_window`
+Admin-only configuration: set the holdback window (in seconds) that must elapse
+before `release_expired_holdback` may be called.
+
+The window must be at least `MIN_HOLDBACK_WINDOW_SECONDS` (86 400 s = 1 day) to
+guarantee the recipient has a realistic opportunity to either release the escrow or
+raise a dispute before the driver can claim it unilaterally. The default when no
+value has been set is `DEFAULT_HOLDBACK_WINDOW_SECONDS` (259 200 s = 3 days).
+
+**Parameters:**
+- `admin: Address` - Admin address (must sign)
+- `new_window_seconds: u64` - New holdback window in seconds (must be ≥ 86 400)
+
+**Authorization:** Admin only
+
+**Errors:**
+- `Unauthorized` - Caller is not the stored admin
+- `InvalidState` - `new_window_seconds` is below `MIN_HOLDBACK_WINDOW_SECONDS` (86 400 s)
+
+**Events:** `holdback_window_updated`
+
+**State Changes:**
+- Stores the new holdback window in instance storage
+- Extends instance TTL
+
+**Example:**
+```rust
+// Set a 5-day holdback window:
+escrow_contract.set_holdback_window(
+    &admin_address,
+    5 * 24 * 60 * 60  // 432_000 seconds
+);
+```
+
+#### `get_holdback_window`
+Return the currently configured holdback window in seconds, falling back to
+`DEFAULT_HOLDBACK_WINDOW_SECONDS` (259 200 s = 3 days) if no value has been set by
+`set_holdback_window`.
+
+**Parameters:** None
+
+**Returns:** `u64` — holdback window in seconds
+
+**Example:**
+```rust
+let window: u64 = escrow_contract.get_holdback_window();
+```
+
 ### Query Functions
 
 #### `get_admin`

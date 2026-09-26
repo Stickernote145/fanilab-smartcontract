@@ -387,3 +387,8 @@ This project is licensed under the MIT License - see the `LICENSE` file for deta
 ---
 
 Built with ❤️ by the FaniLab Team | Powered by Stellar Soroban
+
+## Handsoff notes
+
+<!-- handsoff-issue-408 -->
+- #408: `identity_reputation_contract` instance storage is never TTL-extended

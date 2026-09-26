@@ -395,3 +395,6 @@ Built with ❤️ by the FaniLab Team | Powered by Stellar Soroban
 
 <!-- handsoff-issue-417 -->
 - #417: `delivery_contract` missing empty batch regression test
+
+<!-- handsoff-issue-418 -->
+- #418: `delivery_contract` missing contract test coverage for `get_deliveries_page`

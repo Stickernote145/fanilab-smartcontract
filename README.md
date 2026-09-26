@@ -395,3 +395,6 @@ Built with ❤️ by the FaniLab Team | Powered by Stellar Soroban
 
 <!-- handsoff-issue-409 -->
 - #409: `API.md` EscrowRecord and EscrowState definitions are severely outdated
+
+<!-- handsoff-issue-410 -->
+- #410: `delivery_contract/test.rs` is missing unauthorized caller regression tests for admin

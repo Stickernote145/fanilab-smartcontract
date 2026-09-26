@@ -392,3 +392,6 @@ Built with ❤️ by the FaniLab Team | Powered by Stellar Soroban
 
 <!-- handsoff-issue-412 -->
 - #412: `fleet_contract/test.rs` is missing unauthorized caller test for `set_escrow_contract`
+
+<!-- handsoff-issue-413 -->
+- #413: Missing admin rotation capability in core contracts

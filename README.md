@@ -395,3 +395,6 @@ Built with ❤️ by the FaniLab Team | Powered by Stellar Soroban
 
 <!-- handsoff-issue-433 -->
 - #433: `escrow_contract` persistent storage mutations of `DataKey::EscrowIndex` and `DataKey::EscrowIndexLen` miss `extend_ttl`, causing silent query history truncation
+
+<!-- handsoff-issue-434 -->
+- #434: `delivery_contract` persistent storage mutations of `DataKey::DeliveryIndex` and `DataKey::DeliveryIndexLen` miss `extend_ttl`, causing silent query history truncation

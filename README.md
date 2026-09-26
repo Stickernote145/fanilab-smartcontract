@@ -392,3 +392,6 @@ Built with ❤️ by the FaniLab Team | Powered by Stellar Soroban
 
 <!-- handsoff-issue-416 -->
 - #416: `escrow_contract` missing empty batch regression test
+
+<!-- handsoff-issue-417 -->
+- #417: `delivery_contract` missing empty batch regression test

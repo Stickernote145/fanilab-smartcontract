@@ -392,3 +392,6 @@ Built with ❤️ by the FaniLab Team | Powered by Stellar Soroban
 
 <!-- handsoff-issue-408 -->
 - #408: `identity_reputation_contract` instance storage is never TTL-extended
+
+<!-- handsoff-issue-409 -->
+- #409: `API.md` EscrowRecord and EscrowState definitions are severely outdated

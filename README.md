@@ -392,3 +392,6 @@ Built with ❤️ by the FaniLab Team | Powered by Stellar Soroban
 
 <!-- handsoff-issue-428 -->
 - #428: `create_delivery` / `update_delivery_metadata` missing `created_at` timestamp overwrite validation
+
+<!-- handsoff-issue-430 -->
+- #430: `cancel_delivery` panics if escrow has not been funded yet

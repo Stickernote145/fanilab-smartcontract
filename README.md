@@ -398,3 +398,6 @@ Built with ❤️ by the FaniLab Team | Powered by Stellar Soroban
 
 <!-- handsoff-issue-434 -->
 - #434: `delivery_contract` persistent storage mutations of `DataKey::DeliveryIndex` and `DataKey::DeliveryIndexLen` miss `extend_ttl`, causing silent query history truncation
+
+<!-- handsoff-issue-435 -->
+- #435: `fleet_management_contract` persistent storage mutation of `DataKey::FleetCounter` misses `extend_ttl`, permanently bricking fleet creation upon expiration

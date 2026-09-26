@@ -100,6 +100,7 @@ pub enum FleetError {
     TimelockNotElapsed = 9,
     FleetInactive = 10,
     InvalidConfiguration = 11,
+    RosterFull = 12,
 }
 
 #[contracttype]
@@ -212,6 +213,7 @@ impl FleetManagementContract {
     /// profile for the owner via a cross-contract call.
     #[allow(deprecated)] // events().publish() is deprecated in SDK 27.0.0 but still functional; tracked in SOROBAN_SDK_27_MIGRATION.md#event-system-migration (Issue #114)
     pub fn register_fleet(env: Env, owner: Address, treasury: Address) -> u64 {
+        env.storage().instance().extend_ttl(ttl::LEDGER_TTL_THRESHOLD, ttl::LEDGER_TTL_EXTEND_TO);
         owner.require_auth();
         require_escrow_not_paused(&env);
 
@@ -303,6 +305,7 @@ impl FleetManagementContract {
     /// `remove_driver_from_fleet` if desired.
     #[allow(deprecated)] // events().publish() is deprecated in SDK 27.0.0 but still functional; tracked in SOROBAN_SDK_27_MIGRATION.md#event-system-migration (Issue #114)
     pub fn deactivate_fleet(env: Env, caller: Address, fleet_id: u64) {
+        env.storage().instance().extend_ttl(ttl::LEDGER_TTL_THRESHOLD, ttl::LEDGER_TTL_EXTEND_TO);
         caller.require_auth();
         require_escrow_not_paused(&env);
 
@@ -349,6 +352,7 @@ impl FleetManagementContract {
     ///   via `configure_signers` after recovery.
     #[allow(deprecated)] // events().publish() is deprecated in SDK 27.0.0 but still functional; tracked in SOROBAN_SDK_27_MIGRATION.md#event-system-migration (Issue #114)
     pub fn admin_reassign_fleet_owner(env: Env, admin: Address, fleet_id: u64, new_owner: Address) {
+        env.storage().instance().extend_ttl(ttl::LEDGER_TTL_THRESHOLD, ttl::LEDGER_TTL_EXTEND_TO);
         admin.require_auth();
 
         if !is_admin(&env, &admin) {
@@ -413,6 +417,7 @@ impl FleetManagementContract {
         fleet_id: u64,
         new_treasury: Address,
     ) {
+        env.storage().instance().extend_ttl(ttl::LEDGER_TTL_THRESHOLD, ttl::LEDGER_TTL_EXTEND_TO);
         admin.require_auth();
 
         if !is_admin(&env, &admin) {
@@ -474,6 +479,7 @@ impl FleetManagementContract {
         treasury: Address,
         co_signers: soroban_sdk::Vec<Address>,
     ) {
+        env.storage().instance().extend_ttl(ttl::LEDGER_TTL_THRESHOLD, ttl::LEDGER_TTL_EXTEND_TO);
         owner.require_auth();
         require_escrow_not_paused(&env);
 
@@ -521,6 +527,7 @@ impl FleetManagementContract {
     /// finalization pattern.
     #[allow(deprecated)] // events().publish() is deprecated in SDK 27.0.0 but still functional; tracked in SOROBAN_SDK_27_MIGRATION.md#event-system-migration (Issue #114)
     pub fn confirm_fleet_treasury_update(env: Env, fleet_id: u64) {
+        env.storage().instance().extend_ttl(ttl::LEDGER_TTL_THRESHOLD, ttl::LEDGER_TTL_EXTEND_TO);
         require_escrow_not_paused(&env);
         let pending_key = DataKey::PendingTreasury(fleet_id);
         let pending: PendingTreasuryChange = env
@@ -587,6 +594,7 @@ impl FleetManagementContract {
         driver: Address,
         co_signers: soroban_sdk::Vec<Address>,
     ) {
+        env.storage().instance().extend_ttl(ttl::LEDGER_TTL_THRESHOLD, ttl::LEDGER_TTL_EXTEND_TO);
         caller.require_auth();
         require_escrow_not_paused(&env);
 
@@ -657,6 +665,7 @@ impl FleetManagementContract {
         driver: Address,
         co_signers: soroban_sdk::Vec<Address>,
     ) {
+        env.storage().instance().extend_ttl(ttl::LEDGER_TTL_THRESHOLD, ttl::LEDGER_TTL_EXTEND_TO);
         owner.require_auth();
         require_escrow_not_paused(&env);
 
@@ -689,6 +698,7 @@ impl FleetManagementContract {
     /// increments `total_active_drivers` on the fleet profile.
     #[allow(deprecated)] // events().publish() is deprecated in SDK 27.0.0 but still functional; tracked in SOROBAN_SDK_27_MIGRATION.md#event-system-migration (Issue #114)
     pub fn accept_fleet_invite(env: Env, fleet_id: u64, driver: Address) {
+        env.storage().instance().extend_ttl(ttl::LEDGER_TTL_THRESHOLD, ttl::LEDGER_TTL_EXTEND_TO);
         // Driver must authorise.
         driver.require_auth();
         require_escrow_not_paused(&env);
@@ -717,7 +727,7 @@ impl FleetManagementContract {
 
         // Guard against unbounded roster growth before changing membership state.
         if profile.total_active_drivers >= MAX_ROSTER_SIZE {
-            panic_with_error!(&env, FleetError::FleetNotFound);
+            panic_with_error!(&env, FleetError::RosterFull);
         }
 
         // Promote driver to active.
@@ -777,6 +787,7 @@ impl FleetManagementContract {
         driver: Address,
         co_signers: soroban_sdk::Vec<Address>,
     ) {
+        env.storage().instance().extend_ttl(ttl::LEDGER_TTL_THRESHOLD, ttl::LEDGER_TTL_EXTEND_TO);
         let mut profile: FleetProfile = env
             .storage()
             .persistent()
@@ -837,24 +848,27 @@ impl FleetManagementContract {
             }
 
             if let Some(index) = removed_index {
-                for next_index in index..(roster_len - 1) {
-                    let next_key = DataKey::FleetRoster(fleet_id, next_index + 1);
-                    let current_key = DataKey::FleetRoster(fleet_id, next_index);
-                    let next_driver: Address = env
+                let last_index = roster_len - 1;
+                if index != last_index {
+                    // Swap the last driver into the removed slot.
+                    let last_key = DataKey::FleetRoster(fleet_id, last_index);
+                    let removed_slot_key = DataKey::FleetRoster(fleet_id, index);
+                    let last_driver: Address = env
                         .storage()
                         .persistent()
-                        .get(&next_key)
+                        .get(&last_key)
                         .unwrap();
-                    env.storage().persistent().set(&current_key, &next_driver);
+                    env.storage().persistent().set(&removed_slot_key, &last_driver);
                     env.storage().persistent().extend_ttl(
-                        &current_key,
+                        &removed_slot_key,
                         ttl::LEDGER_TTL_THRESHOLD,
                         ttl::LEDGER_TTL_EXTEND_TO,
                     );
                 }
+                // Delete the now-vacant last slot.
                 env.storage()
                     .persistent()
-                    .remove(&DataKey::FleetRoster(fleet_id, roster_len - 1));
+                    .remove(&DataKey::FleetRoster(fleet_id, last_index));
             }
         }
 
@@ -874,6 +888,7 @@ impl FleetManagementContract {
     /// fleet, otherwise returns the driver's own address.
     #[allow(deprecated)]
     pub fn get_payout_address(env: Env, driver: Address, fleet_id: u64) -> Address {
+        env.storage().instance().extend_ttl(ttl::LEDGER_TTL_THRESHOLD, ttl::LEDGER_TTL_EXTEND_TO);
         let status: Option<DriverFleetStatus> = env
             .storage()
             .persistent()
@@ -950,6 +965,7 @@ impl FleetManagementContract {
         signers: soroban_sdk::Vec<Address>,
         threshold: u32,
     ) {
+        env.storage().instance().extend_ttl(ttl::LEDGER_TTL_THRESHOLD, ttl::LEDGER_TTL_EXTEND_TO);
         owner.require_auth();
         require_escrow_not_paused(&env);
 

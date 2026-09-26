@@ -15,7 +15,48 @@ Cargo.lock
 *.lib
 *.rsp
 
+# Soroban / Stellar build artifacts
+*.wasm
+*.optimized.wasm
+wasm-out/
+wasm_out/
+**/.soroban/
+
 # Soroban test snapshots
 test_snapshots/
+**/test_snapshots/
+
 # proptest failure-seed files
 **/proptest-regressions/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# IDE and editor files
+.idea/
+.vscode/
+*.code-workspace
+.DS_Store
+Thumbs.db
+
+# Node / JS tooling (sdk/typescript)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+dist/
+.next/
+out/
+
+# Coverage reports
+lcov.info
+coverage/
+tarpaulin-report.html
+
+# Temporary files
+*.tmp
+*.swp
+*~

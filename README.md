@@ -398,3 +398,6 @@ Built with ❤️ by the FaniLab Team | Powered by Stellar Soroban
 
 <!-- handsoff-issue-410 -->
 - #410: `delivery_contract/test.rs` is missing unauthorized caller regression tests for admin
+
+<!-- handsoff-issue-411 -->
+- #411: `escrow_contract/test.rs` is missing unauthorized tests for protocol admin parameters

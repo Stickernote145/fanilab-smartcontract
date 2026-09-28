@@ -253,6 +253,6 @@ function decodeEscrow(value: unknown): EscrowRecord {
     createdAt: Number(record.created_at), expiresAt: record.expires_at === null ? undefined : Number(record.expires_at),
     disputedBy: record.disputed_by === null ? undefined : String(record.disputed_by),
     disputedAt: record.disputed_at === null ? undefined : Number(record.disputed_at),
-    fleetId: record.fleet_id === null ? undefined : Number(record.fleet_id),
+    fleetId: record.fleet_id === null ? undefined : BigInt(String(record.fleet_id)),
   };
 }

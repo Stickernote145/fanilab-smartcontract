@@ -535,11 +535,6 @@ impl DeliveryContract {
         require_escrow_not_paused(&env);
 
         let is_caller_admin = is_admin(&env, &caller);
-        let is_self_assignment = caller == driver;
-
-        if !is_caller_admin && !is_self_assignment {
-            panic_with_error!(&env, FaniLabError::Unauthorized);
-        }
 
         let key = delivery_key(delivery_id);
         let mut delivery: DeliveryRecord = env
@@ -548,8 +543,28 @@ impl DeliveryContract {
             .get(&key)
             .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::DeliveryNotFound));
 
+        // Only admin or the delivery sender can assign a driver
+        let is_sender = caller == delivery.sender;
+        if !is_caller_admin && !is_sender {
+            panic_with_error!(&env, FaniLabError::Unauthorized);
+        }
+
         if driver == delivery.sender || driver == delivery.recipient {
             panic_with_error!(&env, DeliveryError::InvalidDriver);
+        }
+
+        let identity_contract: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::IdentityReputationContract)
+            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::NotInitialized));
+        let is_suspended: bool = env.invoke_contract(
+            &identity_contract,
+            &Symbol::new(&env, "is_driver_suspended"),
+            soroban_sdk::vec![&env, driver.into_val(&env)],
+        );
+        if is_suspended {
+            panic_with_error!(&env, FaniLabError::Unauthorized);
         }
 
         validate_transition(delivery.status, DeliveryStatus::Active)
@@ -611,6 +626,20 @@ impl DeliveryContract {
         match &delivery.driver {
             Some(assigned) if *assigned == driver => {}
             _ => panic_with_error!(&env, FaniLabError::Unauthorized),
+        }
+
+        let identity_contract: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::IdentityReputationContract)
+            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::NotInitialized));
+        let is_suspended: bool = env.invoke_contract(
+            &identity_contract,
+            &Symbol::new(&env, "is_driver_suspended"),
+            soroban_sdk::vec![&env, driver.into_val(&env)],
+        );
+        if is_suspended {
+            panic_with_error!(&env, FaniLabError::Unauthorized);
         }
 
         validate_transition(delivery.status, DeliveryStatus::InTransit)

@@ -1867,13 +1867,6 @@ impl EscrowContract {
         }
         let contract_balance =
             token::Client::new(&env, &record.token).balance(&env.current_contract_address());
-        if contract_balance < record.amount {
-            panic_with_error!(&env, EscrowError::InsufficientFunds);
-        }
-        // Effects (state) are committed before the interaction (transfer)
-        // below, per checks-effects-interactions.
-        record.status = EscrowStatus::Refunded;
-        save_escrow(&env, delivery_id, &record);
 
         let total_locked_key = DataKey::TotalLocked(record.token.clone());
         let current_total: i128 = env
@@ -1881,6 +1874,14 @@ impl EscrowContract {
             .persistent()
             .get(&total_locked_key)
             .unwrap_or(0);
+
+        if contract_balance < record.amount || current_total > contract_balance {
+            panic_with_error!(&env, EscrowError::InsufficientFunds);
+        }
+        // Effects (state) are committed before the interaction (transfer)
+        // below, per checks-effects-interactions.
+        record.status = EscrowStatus::Refunded;
+        save_escrow(&env, delivery_id, &record);
         env.storage().persistent().set(
             &total_locked_key,
             &current_total.saturating_sub(record.amount),

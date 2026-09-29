@@ -39,6 +39,43 @@ export class DeliveryClient {
   }
 
   /**
+   * Set the identity reputation contract address (admin only)
+   */
+  async setIdentityReputationContract(
+    identityContractId: string,
+    options?: ContractInvokeOptions
+  ): Promise<void> {
+    const admin = options?.sourceAccount;
+    if (!admin) {
+      throw new Error('setIdentityReputationContract requires options.sourceAccount as admin');
+    }
+    this.identityInvoker = new ContractInvoker(identityContractId, options);
+    await this.invoker.call(
+      'set_identity_reputation_contract',
+      [address(admin), address(identityContractId)],
+      options
+    );
+  }
+
+  /**
+   * Set the escrow contract address (admin only)
+   */
+  async setEscrowContract(
+    escrowContractId: string,
+    options?: ContractInvokeOptions
+  ): Promise<void> {
+    const admin = options?.sourceAccount;
+    if (!admin) {
+      throw new Error('setEscrowContract requires options.sourceAccount as admin');
+    }
+    await this.invoker.call(
+      'set_escrow_contract',
+      [address(admin), address(escrowContractId)],
+      options
+    );
+  }
+
+  /**
    * Create a new delivery
    */
   async createDelivery(

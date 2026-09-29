@@ -124,6 +124,35 @@ pub enum DataKey {
     DisputeResolutionLimit,
     Dispute(DeliveryId),
     DisputeReputationPenalty,
+    /// Paged index page: (page_number) → Vec<DeliveryId>
+    /// Page size is `DISPUTE_INDEX_PAGE` entries.
+    DisputeIndex(u32),
+    /// Total number of disputes ever recorded (monotonically increasing).
+    DisputeIndexLen,
+}
+
+/// Number of dispute IDs stored per index page.  Matches the paging
+/// constant used by `escrow_contract` and `delivery_contract` (Issue #234).
+const DISPUTE_INDEX_PAGE: u32 = 64;
+
+/// Append `delivery_id` to the dispute enumeration index.
+fn dispute_index_push(env: &Env, delivery_id: DeliveryId) {
+    let len: u32 = env
+        .storage()
+        .instance()
+        .get(&DataKey::DisputeIndexLen)
+        .unwrap_or(0);
+    let page_key = DataKey::DisputeIndex(len / DISPUTE_INDEX_PAGE);
+    let mut page: soroban_sdk::Vec<DeliveryId> = env
+        .storage()
+        .instance()
+        .get(&page_key)
+        .unwrap_or_else(|| soroban_sdk::Vec::new(env));
+    page.push_back(delivery_id);
+    env.storage().instance().set(&page_key, &page);
+    env.storage()
+        .instance()
+        .set(&DataKey::DisputeIndexLen, &(len + 1));
 }
 
 #[contract]
@@ -513,6 +542,10 @@ impl DisputeResolutionContract {
         env.storage()
             .instance()
             .extend_ttl(ttl::LEDGER_TTL_THRESHOLD, ttl::LEDGER_TTL_EXTEND_TO);
+
+        // Issue #313: maintain enumeration index so admins can page through
+        // all disputes without prior knowledge of delivery IDs.
+        dispute_index_push(&env, delivery_id);
 
         env.events().publish(
             (events::dispute_raised(&env), delivery_id),
@@ -964,6 +997,63 @@ impl DisputeResolutionContract {
             (Symbol::new(&env, "dispute_force_resolved"), delivery_id),
             (delivery_id, DEFAULT_SENDER_SHARE_BPS),
         );
+    }
+
+    /// Returns `true` if a dispute record exists for the given delivery ID,
+    /// `false` otherwise.  Never panics for an unknown ID.  No authorization
+    /// is required.  Use this to check presence before calling `get_dispute`
+    /// if you want to avoid the panic that accessor raises for missing records
+    /// (Issue #312).
+    pub fn has_dispute(env: Env, delivery_id: DeliveryId) -> bool {
+        env.storage()
+            .persistent()
+            .has(&DataKey::Dispute(delivery_id))
+    }
+
+    /// Return a page of dispute delivery IDs from the enumeration index
+    /// (Issue #313).  `offset` is the zero-based start position; `limit` is
+    /// the maximum number of IDs to return (capped at 100).  The caller
+    /// can resolve each returned ID to a full `DisputeCase` via `get_dispute`.
+    ///
+    /// The index is append-only and ordered by raise time.  Status filtering
+    /// is left to the caller: load each `DisputeCase` and inspect
+    /// `DisputeCase.status` to distinguish `Open` from resolved entries.
+    ///
+    /// No authorization is required.
+    pub fn get_disputes_page(
+        env: Env,
+        offset: u32,
+        limit: u32,
+    ) -> soroban_sdk::Vec<DeliveryId> {
+        let len: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::DisputeIndexLen)
+            .unwrap_or(0);
+        let mut out = soroban_sdk::Vec::new(&env);
+        let cap = limit.min(100);
+        let end = len.min(offset.saturating_add(cap));
+        for i in offset.min(len)..end {
+            let page: soroban_sdk::Vec<DeliveryId> = env
+                .storage()
+                .instance()
+                .get(&DataKey::DisputeIndex(i / DISPUTE_INDEX_PAGE))
+                .unwrap_or_else(|| soroban_sdk::Vec::new(&env));
+            if let Some(id) = page.get(i % DISPUTE_INDEX_PAGE) {
+                out.push_back(id);
+            }
+        }
+        out
+    }
+
+    /// Return the total number of disputes ever recorded (monotonically
+    /// increasing).  Combined with `get_disputes_page` this lets callers
+    /// paginate the full index without an extra sentinel call.
+    pub fn get_dispute_count(env: Env) -> u32 {
+        env.storage()
+            .instance()
+            .get(&DataKey::DisputeIndexLen)
+            .unwrap_or(0)
     }
 
     pub fn get_dispute(env: Env, delivery_id: DeliveryId) -> DisputeCase {

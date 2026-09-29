@@ -1778,12 +1778,30 @@ impl EscrowContract {
         get_holdback_window(&env)
     }
 
+    /// Returns `true` if an escrow record exists for the given `delivery_id`.
+    ///
+    /// Used by `delivery_contract::get_combined_state` to determine whether the
+    /// escrow has been created yet before attempting to fetch it, avoiding a
+    /// panic for freshly created, unfunded deliveries (Issue #395).
+    pub fn has_escrow(env: Env, delivery_id: u64) -> bool {
+        env.storage().persistent().has(&escrow_key(delivery_id))
+    }
+
     pub fn get_escrow(env: Env, delivery_id: u64) -> EscrowRecord {
         let key = escrow_key(delivery_id);
         env.storage()
             .persistent()
             .get(&key)
             .unwrap_or_else(|| panic_with_error!(env, EscrowError::DeliveryNotFound))
+    }
+
+    /// Returns `true` if an escrow record exists for the given delivery ID,
+    /// `false` otherwise.  Never panics for an unknown ID.  No authorization
+    /// is required.  Use this to check presence before calling `get_escrow`
+    /// if you want to avoid the panic that accessor raises for missing records
+    /// (Issue #312).
+    pub fn has_escrow(env: Env, delivery_id: u64) -> bool {
+        env.storage().persistent().has(&escrow_key(delivery_id))
     }
 
     #[allow(deprecated)] // events().publish() is deprecated in SDK 27.0.0 but still functional; tracked in SOROBAN_SDK_27_MIGRATION.md#event-system-migration (Issue #114)
@@ -1858,13 +1876,6 @@ impl EscrowContract {
         }
         let contract_balance =
             token::Client::new(&env, &record.token).balance(&env.current_contract_address());
-        if contract_balance < record.amount {
-            panic_with_error!(&env, EscrowError::InsufficientFunds);
-        }
-        // Effects (state) are committed before the interaction (transfer)
-        // below, per checks-effects-interactions.
-        record.status = EscrowStatus::Refunded;
-        save_escrow(&env, delivery_id, &record);
 
         let total_locked_key = DataKey::TotalLocked(record.token.clone());
         let current_total: i128 = env
@@ -1872,6 +1883,14 @@ impl EscrowContract {
             .persistent()
             .get(&total_locked_key)
             .unwrap_or(0);
+
+        if contract_balance < record.amount || current_total > contract_balance {
+            panic_with_error!(&env, EscrowError::InsufficientFunds);
+        }
+        // Effects (state) are committed before the interaction (transfer)
+        // below, per checks-effects-interactions.
+        record.status = EscrowStatus::Refunded;
+        save_escrow(&env, delivery_id, &record);
         env.storage().persistent().set(
             &total_locked_key,
             &current_total.saturating_sub(record.amount),

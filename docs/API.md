@@ -669,6 +669,22 @@ Retrieve full escrow record.
 **Errors:**
 - `DeliveryNotFound` - No escrow for this delivery
 
+#### `has_escrow`
+Check whether an escrow record exists for a delivery without panicking (Issue #312).
+
+**Parameters:**
+- `delivery_id: u64` - Delivery identifier
+
+**Returns:** `bool` — `true` if a record exists, `false` otherwise
+
+**Authorization:** None required
+
+**Notes:**
+- Never panics for an unknown ID — use this to guard calls to `get_escrow` when
+  the caller is not certain the escrow was created.
+- `get_escrow` behavior is unchanged: it still panics with `DeliveryNotFound` for
+  missing records.
+
 #### `create_escrows_batch`
 Create multiple escrows in a single transaction (up to 100 per batch). Enforces
 the same token and amount validation as `create_escrow`.
@@ -793,12 +809,23 @@ Assign a driver to a delivery.
 - `NotAuthorized` - Caller not admin or driver
 - `DeliveryNotFound` - Invalid delivery_id
 - `InvalidState` - Delivery not in Pending state
+- `ProviderNotFound` - KYC enforcement enabled, identity contract configured, and the driver has no profile
+- `Unauthorized` - KYC enforcement enabled and `driver.kyc_verified` is `false`
 
 **Events:** `driver_assigned`
 
 **State Changes:**
 - Sets delivery.driver to specified address
 - Updates status to Active
+
+**KYC Gate (Issue #314):**
+When `require_kyc` is `true` (set via `set_require_kyc`) **and** the identity
+contract is configured, `assign_driver` cross-calls
+`identity_reputation_contract::has_driver_profile` and
+`get_driver_profile` to confirm the driver exists and has `kyc_verified = true`.
+The gate is silently skipped when no identity contract is configured, so
+deployments that have not wired one up continue to work even with the flag set.
+The default is `false` (gate disabled), preserving all existing flows.
 
 **Example:**
 ```rust
@@ -808,6 +835,32 @@ delivery_contract.assign_driver(
     &driver
 );
 ```
+
+#### `set_require_kyc`
+Enable or disable the KYC gate on `assign_driver` (Issue #314).
+
+**Parameters:**
+- `admin: Address` - Admin address
+- `required: bool` - `true` to enable KYC enforcement, `false` to disable
+
+**Authorization:** Admin only
+
+**Events:** `require_kyc_updated`
+
+**Notes:**
+- Default is `false` (enforcement disabled).  Existing flows are unaffected
+  until an admin explicitly enables this.
+- The gate is silently skipped when no identity contract is configured,
+  even when `required` is `true`.
+
+#### `get_require_kyc`
+Return the current KYC-enforcement setting (Issue #314).
+
+**Parameters:** None
+
+**Returns:** `bool` — `true` if `assign_driver` enforces KYC verification
+
+**Authorization:** None required
 
 #### `mark_in_transit`
 Driver marks delivery as actively in transit.
@@ -1236,6 +1289,50 @@ Retrieve a full dispute record by delivery ID.
 
 **Errors:**
 - `DeliveryNotFound` - No dispute exists for this delivery
+
+#### `has_dispute`
+Check whether a dispute record exists for a delivery without panicking (Issue #312).
+
+**Parameters:**
+- `delivery_id: DeliveryId` - Delivery identifier
+
+**Returns:** `bool` — `true` if a record exists, `false` otherwise
+
+**Authorization:** None required
+
+**Notes:**
+- Never panics for an unknown ID — use this to guard calls to `get_dispute`.
+- `get_dispute` behavior is unchanged: it still panics with `DeliveryNotFound`
+  for missing records.
+
+#### `get_disputes_page`
+Enumerate all disputes by page offset (Issue #313).  Returns delivery IDs in
+raise-time order; resolve each to a full record via `get_dispute`.  Callers can
+filter on `DisputeCase.status` to separate `Open` from resolved disputes.
+
+**Parameters:**
+- `offset: u32` - Zero-based start position in the enumeration index
+- `limit: u32` - Maximum IDs to return (capped at 100 per call)
+
+**Returns:** `Vec<DeliveryId>`
+
+**Authorization:** None required
+
+**Notes:**
+- The index is append-only and never reordered; pages are stable across calls.
+- Status filtering is the caller's responsibility.  Load each `DisputeCase` via
+  `get_dispute` and inspect `status` to find `Open` entries.
+
+#### `get_dispute_count`
+Return the total number of disputes ever recorded (monotonically increasing).
+Use with `get_disputes_page` to page through the full index without sentinel
+calls (Issue #313).
+
+**Parameters:** None
+
+**Returns:** `u32`
+
+**Authorization:** None required
 
 ### Dispute Lifecycle
 

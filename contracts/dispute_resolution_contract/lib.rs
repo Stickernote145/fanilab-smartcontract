@@ -482,7 +482,7 @@ impl DisputeResolutionContract {
                 let delivered_at = delivery.delivered_at.unwrap_or(0);
                 let current_time = env.ledger().timestamp();
                 let dispute_limit = Self::get_dispute_time_limit(env.clone());
-                if current_time > delivered_at + dispute_limit {
+                if current_time > delivered_at.saturating_add(dispute_limit) {
                     panic_with_error!(&env, FaniLabError::InvalidState);
                 }
                 // Call delivery contract to transition to Disputed

@@ -390,8 +390,14 @@ Built with ❤️ by the FaniLab Team | Powered by Stellar Soroban
 
 ## Handsoff notes
 
-<!-- handsoff-issue-412 -->
-- #412: `fleet_contract/test.rs` is missing unauthorized caller test for `set_escrow_contract`
+<!-- handsoff-issue-432 -->
+- #432: `escrow_contract` persistent storage mutation of `DataKey::TotalLocked` misses `extend_ttl`, causing silent tracking expiration
 
-<!-- handsoff-issue-413 -->
-- #413: Missing admin rotation capability in core contracts
+<!-- handsoff-issue-433 -->
+- #433: `escrow_contract` persistent storage mutations of `DataKey::EscrowIndex` and `DataKey::EscrowIndexLen` miss `extend_ttl`, causing silent query history truncation
+
+<!-- handsoff-issue-434 -->
+- #434: `delivery_contract` persistent storage mutations of `DataKey::DeliveryIndex` and `DataKey::DeliveryIndexLen` miss `extend_ttl`, causing silent query history truncation
+
+<!-- handsoff-issue-435 -->
+- #435: `fleet_management_contract` persistent storage mutation of `DataKey::FleetCounter` misses `extend_ttl`, permanently bricking fleet creation upon expiration

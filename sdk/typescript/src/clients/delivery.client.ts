@@ -158,7 +158,8 @@ export class DeliveryClient {
    * Get all deliveries for a driver
    */
   async getDeliveriesByDriver(driver: string): Promise<bigint[]> {
-    throw new Error('DeliveryContract does not expose get_deliveries_by_driver');
+    const result = await this.invoker.call('get_deliveries_by_driver', [address(driver)], this.options);
+    return decodeIds(result);
   }
 
   private identity(): ContractInvoker {

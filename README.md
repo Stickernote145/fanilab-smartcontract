@@ -390,14 +390,14 @@ Built with ❤️ by the FaniLab Team | Powered by Stellar Soroban
 
 ## Handsoff notes
 
-<!-- handsoff-issue-408 -->
-- #408: `identity_reputation_contract` instance storage is never TTL-extended
+<!-- handsoff-issue-432 -->
+- #432: `escrow_contract` persistent storage mutation of `DataKey::TotalLocked` misses `extend_ttl`, causing silent tracking expiration
 
-<!-- handsoff-issue-409 -->
-- #409: `API.md` EscrowRecord and EscrowState definitions are severely outdated
+<!-- handsoff-issue-433 -->
+- #433: `escrow_contract` persistent storage mutations of `DataKey::EscrowIndex` and `DataKey::EscrowIndexLen` miss `extend_ttl`, causing silent query history truncation
 
-<!-- handsoff-issue-410 -->
-- #410: `delivery_contract/test.rs` is missing unauthorized caller regression tests for admin
+<!-- handsoff-issue-434 -->
+- #434: `delivery_contract` persistent storage mutations of `DataKey::DeliveryIndex` and `DataKey::DeliveryIndexLen` miss `extend_ttl`, causing silent query history truncation
 
-<!-- handsoff-issue-411 -->
-- #411: `escrow_contract/test.rs` is missing unauthorized tests for protocol admin parameters
+<!-- handsoff-issue-435 -->
+- #435: `fleet_management_contract` persistent storage mutation of `DataKey::FleetCounter` misses `extend_ttl`, permanently bricking fleet creation upon expiration

@@ -340,6 +340,7 @@ impl DisputeResolutionContract {
             .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::NotInitialized))
     }
 
+    #[allow(deprecated)] // events().publish() is deprecated in SDK 27.0.0 but still functional; tracked in SOROBAN_SDK_27_MIGRATION.md#event-system-migration (Issue #114)
     pub fn set_identity_reputation_contract(
         env: Env,
         caller: Address,
@@ -352,6 +353,12 @@ impl DisputeResolutionContract {
         env.storage()
             .instance()
             .set(&DataKey::IdentityReputationContract, &reputation_contract);
+        // #382: emit event so off-chain indexers can track when this critical
+        // contract pointer is updated by an admin.
+        env.events().publish(
+            (Symbol::new(&env, "identity_reputation_contract_set"),),
+            (caller, reputation_contract),
+        );
     }
 
     pub fn get_identity_reputation_contract(env: Env) -> Address {
@@ -404,6 +411,7 @@ impl DisputeResolutionContract {
             .unwrap_or(0)
     }
 
+    #[allow(deprecated)] // events().publish() is deprecated in SDK 27.0.0 but still functional; tracked in SOROBAN_SDK_27_MIGRATION.md#event-system-migration (Issue #114)
     pub fn set_dispute_resolution_limit(env: Env, caller: Address, new_limit: u64) {
         caller.require_auth();
         if !Self::is_admin(env.clone(), caller.clone()) {
@@ -415,9 +423,16 @@ impl DisputeResolutionContract {
         if new_limit < MIN_DISPUTE_RESOLUTION_LIMIT {
             panic_with_error!(&env, FaniLabError::InvalidState);
         }
+        let old_limit = Self::get_dispute_resolution_limit(env.clone());
         env.storage()
             .instance()
             .set(&DataKey::DisputeResolutionLimit, &new_limit);
+        // #382: emit event so off-chain indexers can track admin changes to
+        // this security-relevant parameter.
+        env.events().publish(
+            (Symbol::new(&env, "dispute_resolution_limit_updated"),),
+            (caller, old_limit, new_limit),
+        );
     }
 
     #[allow(deprecated)] // events().publish() is deprecated in SDK 27.0.0 but still functional; tracked in SOROBAN_SDK_27_MIGRATION.md#event-system-migration (Issue #114)
@@ -522,6 +537,11 @@ impl DisputeResolutionContract {
             ttl::LEDGER_TTL_THRESHOLD,
             ttl::LEDGER_TTL_EXTEND_TO,
         );
+        // #380: extend instance TTL so contract configuration (contract pointers,
+        // limits) does not archive while the contract is actively being used.
+        env.storage()
+            .instance()
+            .extend_ttl(ttl::LEDGER_TTL_THRESHOLD, ttl::LEDGER_TTL_EXTEND_TO);
 
         // Issue #313: maintain enumeration index so admins can page through
         // all disputes without prior knowledge of delivery IDs.
@@ -929,11 +949,39 @@ impl DisputeResolutionContract {
             ttl::LEDGER_TTL_THRESHOLD,
             ttl::LEDGER_TTL_EXTEND_TO,
         );
+        // #380: extend instance TTL so contract configuration remains alive
+        // under active usage (force_resolve_dispute is a high-traffic entry point).
+        env.storage()
+            .instance()
+            .extend_ttl(ttl::LEDGER_TTL_THRESHOLD, ttl::LEDGER_TTL_EXTEND_TO);
 
         // Perform external interactions
         // Pass this contract's address as the caller so the escrow contract's
         // require_admin check succeeds; the actual party (sender/recipient/driver)
         // only needs to authorize this call, not the subsequent escrow call.
+
+        // #381: apply the same split reputation penalty as the standard
+        // resolve_dispute_split_funds path — a forced split must not let the
+        // driver evade the reputational consequence of an unresolved dispute.
+        if let Some(driver) = delivery.driver {
+            if let Some(reputation_addr) = env
+                .storage()
+                .instance()
+                .get::<DataKey, Address>(&DataKey::IdentityReputationContract)
+            {
+                let _: () = env.invoke_contract(
+                    &reputation_addr,
+                    &Symbol::new(&env, "decrease_reputation"),
+                    soroban_sdk::vec![
+                        &env,
+                        env.current_contract_address().into_val(&env),
+                        driver.clone().into_val(&env),
+                        DISPUTE_REPUTATION_SPLIT_PENALTY.into_val(&env),
+                    ],
+                );
+            }
+        }
+
         let _: () = env.invoke_contract(
             &escrow_addr,
             &Symbol::new(&env, "resolve_dispute_split"),

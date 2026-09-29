@@ -126,7 +126,9 @@ mod constants {
 /// Allowed transitions:
 ///   Pending   → Active, Cancelled
 ///   Active    → InTransit, Disputed, Cancelled
-///   InTransit → Delivered, Disputed
+///   InTransit → Delivered, Disputed, Cancelled  (Issue #300: Cancelled added so
+///               reclaim_delivery_expired_escrow can synchronise an in-transit
+///               delivery whose escrow expired)
 ///   Delivered → Disputed
 ///   Disputed  → Delivered (only via dispute resolution)
 ///   Cancelled → (terminal, no transitions)
@@ -141,6 +143,7 @@ pub fn validate_transition(from: DeliveryStatus, to: DeliveryStatus) -> Result<(
             | (DeliveryStatus::Active, DeliveryStatus::Cancelled)
             | (DeliveryStatus::InTransit, DeliveryStatus::Delivered)
             | (DeliveryStatus::InTransit, DeliveryStatus::Disputed)
+            | (DeliveryStatus::InTransit, DeliveryStatus::Cancelled)
             | (DeliveryStatus::Delivered, DeliveryStatus::Disputed)
             | (DeliveryStatus::Disputed, DeliveryStatus::Delivered)
     );
@@ -251,6 +254,14 @@ impl DeliveryContract {
             ensure_user_profile(&env, &identity_contract, &sender);
         }
 
+        // Extend instance TTL on every delivery creation so the protocol's
+        // core configuration pointers (Admin, EscrowContract,
+        // IdentityReputationContract) cannot be archived while the contract is
+        // actively used (Issue #393).
+        env.storage()
+            .instance()
+            .extend_ttl(ttl::LEDGER_TTL_THRESHOLD, ttl::LEDGER_TTL_EXTEND_TO);
+
         let mut counter: u64 = env
             .storage()
             .persistent()
@@ -333,6 +344,10 @@ impl DeliveryContract {
     ) -> soroban_sdk::Vec<DeliveryId> {
         sender.require_auth();
         require_escrow_not_paused(&env);
+
+        if sender == recipient {
+            panic_with_error!(&env, DeliveryError::InvalidParties);
+        }
 
         if metadata_list.len() > MAX_BATCH_SIZE {
             panic_with_error!(&env, DeliveryError::BatchTooLarge);
@@ -523,11 +538,6 @@ impl DeliveryContract {
         require_escrow_not_paused(&env);
 
         let is_caller_admin = is_admin(&env, &caller);
-        let is_self_assignment = caller == driver;
-
-        if !is_caller_admin && !is_self_assignment {
-            panic_with_error!(&env, FaniLabError::Unauthorized);
-        }
 
         let key = delivery_key(delivery_id);
         let mut delivery: DeliveryRecord = env
@@ -536,8 +546,28 @@ impl DeliveryContract {
             .get(&key)
             .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::DeliveryNotFound));
 
+        // Only admin or the delivery sender can assign a driver
+        let is_sender = caller == delivery.sender;
+        if !is_caller_admin && !is_sender {
+            panic_with_error!(&env, FaniLabError::Unauthorized);
+        }
+
         if driver == delivery.sender || driver == delivery.recipient {
             panic_with_error!(&env, DeliveryError::InvalidDriver);
+        }
+
+        let identity_contract: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::IdentityReputationContract)
+            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::NotInitialized));
+        let is_suspended: bool = env.invoke_contract(
+            &identity_contract,
+            &Symbol::new(&env, "is_driver_suspended"),
+            soroban_sdk::vec![&env, driver.into_val(&env)],
+        );
+        if is_suspended {
+            panic_with_error!(&env, FaniLabError::Unauthorized);
         }
 
         validate_transition(delivery.status, DeliveryStatus::Active)
@@ -552,6 +582,13 @@ impl DeliveryContract {
             ttl::LEDGER_TTL_THRESHOLD,
             ttl::LEDGER_TTL_EXTEND_TO,
         );
+
+        // Extend instance TTL on every driver assignment so the protocol's
+        // core configuration pointers cannot be archived while the contract
+        // is actively used (Issue #393).
+        env.storage()
+            .instance()
+            .extend_ttl(ttl::LEDGER_TTL_THRESHOLD, ttl::LEDGER_TTL_EXTEND_TO);
 
         env.events().publish(
             (events::driver_assigned(&env),),
@@ -592,6 +629,20 @@ impl DeliveryContract {
         match &delivery.driver {
             Some(assigned) if *assigned == driver => {}
             _ => panic_with_error!(&env, FaniLabError::Unauthorized),
+        }
+
+        let identity_contract: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::IdentityReputationContract)
+            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::NotInitialized));
+        let is_suspended: bool = env.invoke_contract(
+            &identity_contract,
+            &Symbol::new(&env, "is_driver_suspended"),
+            soroban_sdk::vec![&env, driver.into_val(&env)],
+        );
+        if is_suspended {
+            panic_with_error!(&env, FaniLabError::Unauthorized);
         }
 
         validate_transition(delivery.status, DeliveryStatus::InTransit)
@@ -795,11 +846,18 @@ impl DeliveryContract {
     }
 
     /// Returns combined delivery and escrow state, and flags known-invalid combinations.
-    /// Validates that delivery and escrow states are synchronized according to protocol invariants.
+    ///
+    /// The escrow component is `None` when the escrow has not been created yet
+    /// (i.e. the delivery is in `Pending` state and the sender has not funded it).
+    /// Callers must handle the `None` case — it is a normal condition for freshly
+    /// created deliveries, not an error (Issue #395).
+    ///
+    /// `is_synchronized` is `false` whenever the escrow is absent, since an
+    /// unfunded delivery is not yet in a fully synchronized protocol state.
     pub fn get_combined_state(
         env: Env,
         delivery_id: DeliveryId,
-    ) -> (DeliveryRecord, shared_types::EscrowRecord, bool) {
+    ) -> (DeliveryRecord, Option<shared_types::EscrowRecord>, bool) {
         let delivery = Self::get_delivery(env.clone(), delivery_id);
 
         let escrow_address: Address = env
@@ -808,7 +866,22 @@ impl DeliveryContract {
             .get(&DataKey::EscrowContract)
             .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::NotInitialized));
 
+        // Check whether the escrow record exists before fetching it. A delivery
+        // in Pending state may not have a corresponding escrow yet — that is a
+        // valid protocol state, not a bug, so we must not panic here (Issue #395).
         use soroban_sdk::IntoVal;
+        let escrow_exists: bool = env.invoke_contract(
+            &escrow_address,
+            &Symbol::new(&env, "has_escrow"),
+            soroban_sdk::vec![&env, u64::from(delivery_id).into_val(&env)],
+        );
+
+        if !escrow_exists {
+            // No escrow yet — return None; the delivery and escrow states are
+            // not synchronized by definition.
+            return (delivery, None, false);
+        }
+
         let escrow: shared_types::EscrowRecord = env.invoke_contract(
             &escrow_address,
             &Symbol::new(&env, "get_escrow"),
@@ -816,7 +889,7 @@ impl DeliveryContract {
         );
 
         let is_synchronized = Self::validate_state_sync(&delivery, &escrow);
-        (delivery, escrow, is_synchronized)
+        (delivery, Some(escrow), is_synchronized)
     }
 
     /// Validates that delivery and escrow states match expected protocol invariants.
@@ -862,6 +935,79 @@ impl DeliveryContract {
     #[rustfmt::skip]
     pub fn get_deliveries_page(env: Env, owner: Address, kind: u32, offset: u32, limit: u32) -> soroban_sdk::Vec<DeliveryId> {
         index_page(&env, owner, kind, offset, limit)
+    }
+
+    /// Permissionless entry point that reclaims an expired escrow **and**
+    /// simultaneously transitions the delivery to `Cancelled`, keeping
+    /// both records synchronized (Issue #300).
+    ///
+    /// Design rationale (delivery-side driver):
+    /// Every existing cross-contract call in this protocol runs
+    /// delivery → escrow.  Introducing an escrow → delivery edge would add a
+    /// new dependency direction and complicate reasoning about call ordering.
+    /// By placing the combined logic here we preserve the existing direction:
+    /// this function calls `reclaim_expired_escrow` on the escrow contract and
+    /// then updates the delivery record itself.
+    ///
+    /// The escrow call runs first (checks-effects-interactions pattern): if it
+    /// fails (not expired, not Locked, etc.) the delivery status is never
+    /// mutated.
+    ///
+    /// Preconditions (enforced by the escrow contract):
+    ///   - The escrow must be in `Locked` state.
+    ///   - `expires_at` must have elapsed.
+    ///
+    /// Preconditions (enforced here):
+    ///   - The delivery must exist.
+    ///   - The delivery must be in a state from which `Cancelled` is a legal
+    ///     transition: `Pending`, `Active`, or `InTransit`.
+    ///
+    /// Post-condition: `get_combined_state` reports synchronized
+    /// (`Cancelled` + `Refunded`).
+    #[allow(deprecated)] // events().publish() is deprecated in SDK 27.0.0 but still functional; tracked in SOROBAN_SDK_27_MIGRATION.md#event-system-migration (Issue #114)
+    pub fn reclaim_delivery_expired_escrow(env: Env, delivery_id: DeliveryId) {
+        // ── 1. Load delivery ────────────────────────────────────────────────
+        let key = delivery_key(delivery_id);
+        let mut delivery: DeliveryRecord = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::DeliveryNotFound));
+
+        // ── 2. Validate delivery-side transition (before touching escrow) ──
+        validate_transition(delivery.status, DeliveryStatus::Cancelled)
+            .unwrap_or_else(|_| panic_with_error!(&env, FaniLabError::InvalidState));
+
+        // ── 3. Call escrow contract (interaction before local state write) ─
+        //    `reclaim_expired_escrow` panics when the escrow is not Locked,
+        //    not expired, or the contract is paused — all of which propagate
+        //    as a revert so the delivery status below is never mutated.
+        let escrow_address: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::EscrowContract)
+            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::NotInitialized));
+
+        let _: () = env.invoke_contract(
+            &escrow_address,
+            &soroban_sdk::Symbol::new(&env, "reclaim_expired_escrow"),
+            soroban_sdk::vec![&env, u64::from(delivery_id).into_val(&env)],
+        );
+
+        // ── 4. Commit local delivery state change ──────────────────────────
+        delivery.status = DeliveryStatus::Cancelled;
+        env.storage().persistent().set(&key, &delivery);
+        env.storage().persistent().extend_ttl(
+            &key,
+            ttl::LEDGER_TTL_THRESHOLD,
+            ttl::LEDGER_TTL_EXTEND_TO,
+        );
+
+        // ── 5. Emit event ──────────────────────────────────────────────────
+        env.events().publish(
+            (events::delivery_cancelled(&env),),
+            (delivery_id, delivery.sender),
+        );
     }
 }
 

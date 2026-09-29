@@ -4,7 +4,7 @@ use super::*;
 use proptest::prelude::*;
 use soroban_sdk::{
     testutils::{Address as _, Ledger as _},
-    Address, Env, String, Symbol,
+    Address, Env, IntoVal, String, Symbol,
 };
 
 proptest! {
@@ -96,6 +96,27 @@ impl MockEscrowContract {
     ///   - `8888` reports a `Refunded` escrow, standing in for an escrow that
     ///     was returned to the sender (e.g. via `reclaim_expired_escrow`)
     ///     while the delivery advanced independently.
+    ///
+    /// For `has_escrow` (Issue #395): `7777` returns `false` to simulate a
+    /// delivery whose escrow was never created; all other IDs return `true`.
+    pub fn has_escrow(_env: Env, delivery_id: u64) -> bool {
+        if delivery_id == 7777 {
+            return false;
+        }
+        // Check if this delivery was explicitly marked as having no escrow via
+        // `mark_no_escrow` (used by test_get_combined_state_no_escrow).
+        let no_escrow_key = Symbol::new(&_env, "no_escrow");
+        let marked: Option<u64> = _env.storage().temporary().get(&no_escrow_key);
+        marked != Some(delivery_id)
+    }
+
+    /// Test helper: mark a delivery ID as having no escrow, so `has_escrow`
+    /// returns `false` for it. Used by Issue #395 tests.
+    pub fn mark_no_escrow(_env: Env, delivery_id: u64) {
+        let no_escrow_key = Symbol::new(&_env, "no_escrow");
+        _env.storage().temporary().set(&no_escrow_key, &delivery_id);
+    }
+
     pub fn get_escrow(_env: Env, delivery_id: u64) -> shared_types::EscrowRecord {
         if delivery_id == 7777 {
             panic!("MockEscrowFailure");
@@ -919,6 +940,40 @@ fn test_get_combined_state_in_transit_delivery() {
     );
 }
 
+/// Issue #395: get_combined_state must return (delivery, None, false) for a
+/// freshly created, unfunded delivery instead of panicking. The escrow field
+/// being `None` is a normal protocol state for any delivery that hasn't been
+/// paired with an escrow yet.
+#[test]
+fn test_get_combined_state_no_escrow_returns_none_without_panic() {
+    let env = Env::default();
+    let (client, shipper, _driver, recipient, escrow_id, _) = setup_full(&env);
+    let metadata = get_test_metadata(&env, 1);
+    let delivery_id = client.create_delivery(&shipper, &recipient, &metadata);
+
+    // Tell the mock escrow contract that this delivery has no escrow yet,
+    // simulating a freshly created delivery that hasn't been funded.
+    let did_u64: u64 = u64::from(delivery_id);
+    let _: () = env.invoke_contract(
+        &escrow_id,
+        &Symbol::new(&env, "mark_no_escrow"),
+        soroban_sdk::vec![&env, did_u64.into_val(&env)],
+    );
+
+    // Must NOT panic — returns (delivery, None, false).
+    let (delivery, escrow, is_synchronized) = client.get_combined_state(&delivery_id);
+
+    assert_eq!(delivery.status, DeliveryStatus::Pending);
+    assert!(
+        escrow.is_none(),
+        "Escrow should be None for unfunded delivery"
+    );
+    assert!(
+        !is_synchronized,
+        "An unfunded delivery is not synchronized with any escrow"
+    );
+}
+
 // ── METADATA VALIDATION (Issue #96 - empty origin/destination and zero weight) ───────────────────
 
 #[test]
@@ -1480,6 +1535,22 @@ fn test_create_deliveries_batch_overwrites_caller_supplied_delivery_ids() {
         assert_eq!(stored.metadata.delivery_id, u64::from(id));
         assert_ne!(stored.metadata.delivery_id, 4242);
     }
+}
+
+/// Issue #394: create_deliveries_batch must reject sender == recipient with
+/// `InvalidParties` (error code 5), matching the same validation that
+/// `create_delivery` applies on the single-item path.
+#[test]
+#[should_panic(expected = "5")]
+fn test_create_deliveries_batch_rejects_sender_equals_recipient() {
+    let env = Env::default();
+    let (client, shipper, _, _recipient, _, _) = setup_full(&env);
+
+    let mut metadata_list = soroban_sdk::Vec::new(&env);
+    metadata_list.push_back(get_test_metadata(&env, 1));
+
+    // Pass the sender as both sender and recipient — must panic with InvalidParties.
+    client.create_deliveries_batch(&shipper, &shipper, &metadata_list);
 }
 
 #[test]

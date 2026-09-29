@@ -113,6 +113,18 @@ export class IdentityReputationClient {
   async isEligibleForEnterprise(driver: string, options?: ContractInvokeOptions): Promise<boolean> {
     return Boolean(await this.invoker.call('is_eligible_for_enterprise', [address(driver)], options));
   }
+
+  async suspendDriver(params: IdentityReputationTypes.SuspendDriverParams, options?: ContractInvokeOptions): Promise<void> {
+    await this.invoker.call('suspend_driver', [address(params.admin), address(params.driver)], options);
+  }
+
+  async reinstateDriver(params: IdentityReputationTypes.ReinstateDriverParams, options?: ContractInvokeOptions): Promise<void> {
+    await this.invoker.call('reinstate_driver', [address(params.admin), address(params.driver)], options);
+  }
+
+  async isDriverSuspended(driver: string, options?: ContractInvokeOptions): Promise<boolean> {
+    return Boolean(await this.invoker.call('is_driver_suspended', [address(driver)], options));
+  }
 }
 
 function mapConfig(config: ReputationConfig): unknown {

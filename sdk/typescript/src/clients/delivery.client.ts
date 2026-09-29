@@ -98,6 +98,35 @@ export class DeliveryClient {
   }
 
   /**
+   * Create multiple deliveries in a single batch
+   */
+  async createDeliveriesBatch(
+    params: DeliveryTypes.CreateDeliveriesBatchParams,
+    options?: ContractInvokeOptions
+  ): Promise<bigint[]> {
+    const metadatas = params.deliveries.map((delivery) =>
+      map([
+        ['delivery_id', u64(delivery.deliveryId)],
+        ['origin', string(delivery.metadata.pickupLocation ?? '')],
+        ['destination', string(delivery.metadata.dropoffLocation ?? '')],
+        ['cargo_description', map([
+          ['weight_grams', u32(1)],
+          ['category', symbol('General')],
+          ['fragile', bool(false)],
+        ])],
+        ['created_at', u64(Math.floor(Date.now() / 1000))],
+        ['estimated_delivery', u64(Math.floor(Date.now() / 1000) + (delivery.metadata.estimatedDistance ?? 0))],
+      ])
+    );
+    const result = await this.invoker.call(
+      'create_deliveries_batch',
+      [address(params.sender), address(params.recipient), metadatas],
+      options
+    );
+    return decodeIds(result);
+  }
+
+  /**
    * Assign a driver to a delivery
    */
   async assignDriver(

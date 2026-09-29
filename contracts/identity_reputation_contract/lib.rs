@@ -215,16 +215,12 @@ impl IdentityReputationContract {
 
     pub fn is_authorized_contract(env: Env, contract_addr: Address) -> bool {
         let key = DataKey::AuthorizedContract(contract_addr);
-        if env.storage().persistent().get(&key).unwrap_or(false) {
-            env.storage().persistent().extend_ttl(
-                &key,
-                ttl::LEDGER_TTL_THRESHOLD,
-                ttl::LEDGER_TTL_EXTEND_TO,
-            );
-            true
-        } else {
-            false
-        }
+        // Read-only check: TTL extension is intentionally omitted here.
+        // Extending TTL inside a query function incurs unexpected write fees
+        // and violates read-only semantics (Issue #392). TTL extension happens
+        // in set_authorized_contract, which is the only mutating path for
+        // authorization data.
+        env.storage().persistent().get(&key).unwrap_or(false)
     }
 
     pub fn has_driver_profile(env: Env, driver: Address) -> bool {

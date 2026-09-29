@@ -2,9 +2,9 @@
 
 use shared_types::{
     events, is_admin, ttl, DriverInvitedEvent, DriverRemovedEvent, FleetDeactivatedEvent,
-    FleetOwnerReassignedEvent, FleetRegisteredEvent, FleetTreasuryChangeProposedEvent,
-    FleetTreasuryForceUpdatedEvent, FleetTreasuryUpdatedEvent, InviteAcceptedEvent,
-    PayoutRoutingFallbackEvent, StorageKey,
+    FleetOwnerReassignedEvent, FleetReactivatedEvent, FleetRegisteredEvent,
+    FleetTreasuryChangeProposedEvent, FleetTreasuryForceUpdatedEvent, FleetTreasuryUpdatedEvent,
+    InviteAcceptedEvent, PayoutRoutingFallbackEvent, StorageKey,
 };
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, panic_with_error, Address, Env, IntoVal,
@@ -100,7 +100,9 @@ pub enum FleetError {
     TimelockNotElapsed = 9,
     FleetInactive = 10,
     InvalidConfiguration = 11,
-    RosterFull = 12,
+    /// Roster compaction read a slot that was expected to exist but was absent
+    /// from persistent storage — indicates corrupted or out-of-sync state.
+    InternalStorageError = 12,
 }
 
 #[contracttype]
@@ -331,6 +333,54 @@ impl FleetManagementContract {
         env.events().publish(
             (events::fleet_deactivated(&env),),
             FleetDeactivatedEvent { fleet_id, caller },
+        );
+    }
+
+    // ── Issue #389 — reactivate_fleet ─────────────────────────────────────────
+
+    /// Reactivate a fleet that was previously deactivated, restoring it to
+    /// operational status.  This is the inverse of `deactivate_fleet`.
+    ///
+    /// Only the fleet owner or the contract admin may call this.  Panics with
+    /// `FleetError::InvalidConfiguration` when the fleet is already active,
+    /// mirroring `suspend_driver`/`reinstate_driver` semantics used in the
+    /// identity_reputation_contract.
+    ///
+    /// Once reactivated, `add_driver_to_fleet` accepts new invitations again
+    /// and `get_payout_address` resumes routing active-member payouts to the
+    /// fleet treasury.
+    #[allow(deprecated)] // events().publish() is deprecated in SDK 27.0.0 but still functional; tracked in SOROBAN_SDK_27_MIGRATION.md#event-system-migration (Issue #114)
+    pub fn reactivate_fleet(env: Env, caller: Address, fleet_id: u64) {
+        caller.require_auth();
+        require_escrow_not_paused(&env);
+
+        let fleet_key = DataKey::Fleet(fleet_id);
+        let mut profile: FleetProfile = env
+            .storage()
+            .persistent()
+            .get(&fleet_key)
+            .unwrap_or_else(|| panic_with_error!(&env, FleetError::FleetNotFound));
+
+        if profile.owner != caller && !is_admin(&env, &caller) {
+            panic_with_error!(&env, FleetError::Unauthorized);
+        }
+
+        // Guard: fleet must currently be inactive.
+        if profile.active {
+            panic_with_error!(&env, FleetError::InvalidConfiguration);
+        }
+
+        profile.active = true;
+        env.storage().persistent().set(&fleet_key, &profile);
+        env.storage().persistent().extend_ttl(
+            &fleet_key,
+            ttl::LEDGER_TTL_THRESHOLD,
+            ttl::LEDGER_TTL_EXTEND_TO,
+        );
+
+        env.events().publish(
+            (events::fleet_reactivated(&env),),
+            FleetReactivatedEvent { fleet_id, caller },
         );
     }
 
@@ -856,9 +906,11 @@ impl FleetManagementContract {
                     let last_driver: Address = env
                         .storage()
                         .persistent()
-                        .get(&last_key)
-                        .unwrap();
-                    env.storage().persistent().set(&removed_slot_key, &last_driver);
+                        .get(&next_key)
+                        .unwrap_or_else(|| {
+                            panic_with_error!(&env, FleetError::InternalStorageError)
+                        });
+                    env.storage().persistent().set(&current_key, &next_driver);
                     env.storage().persistent().extend_ttl(
                         &removed_slot_key,
                         ttl::LEDGER_TTL_THRESHOLD,

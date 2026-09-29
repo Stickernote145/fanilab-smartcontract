@@ -126,7 +126,9 @@ mod constants {
 /// Allowed transitions:
 ///   Pending   → Active, Cancelled
 ///   Active    → InTransit, Disputed, Cancelled
-///   InTransit → Delivered, Disputed
+///   InTransit → Delivered, Disputed, Cancelled  (Issue #300: Cancelled added so
+///               reclaim_delivery_expired_escrow can synchronise an in-transit
+///               delivery whose escrow expired)
 ///   Delivered → Disputed
 ///   Disputed  → Delivered (only via dispute resolution)
 ///   Cancelled → (terminal, no transitions)
@@ -141,6 +143,7 @@ pub fn validate_transition(from: DeliveryStatus, to: DeliveryStatus) -> Result<(
             | (DeliveryStatus::Active, DeliveryStatus::Cancelled)
             | (DeliveryStatus::InTransit, DeliveryStatus::Delivered)
             | (DeliveryStatus::InTransit, DeliveryStatus::Disputed)
+            | (DeliveryStatus::InTransit, DeliveryStatus::Cancelled)
             | (DeliveryStatus::Delivered, DeliveryStatus::Disputed)
             | (DeliveryStatus::Disputed, DeliveryStatus::Delivered)
     );
@@ -932,6 +935,79 @@ impl DeliveryContract {
     #[rustfmt::skip]
     pub fn get_deliveries_page(env: Env, owner: Address, kind: u32, offset: u32, limit: u32) -> soroban_sdk::Vec<DeliveryId> {
         index_page(&env, owner, kind, offset, limit)
+    }
+
+    /// Permissionless entry point that reclaims an expired escrow **and**
+    /// simultaneously transitions the delivery to `Cancelled`, keeping
+    /// both records synchronized (Issue #300).
+    ///
+    /// Design rationale (delivery-side driver):
+    /// Every existing cross-contract call in this protocol runs
+    /// delivery → escrow.  Introducing an escrow → delivery edge would add a
+    /// new dependency direction and complicate reasoning about call ordering.
+    /// By placing the combined logic here we preserve the existing direction:
+    /// this function calls `reclaim_expired_escrow` on the escrow contract and
+    /// then updates the delivery record itself.
+    ///
+    /// The escrow call runs first (checks-effects-interactions pattern): if it
+    /// fails (not expired, not Locked, etc.) the delivery status is never
+    /// mutated.
+    ///
+    /// Preconditions (enforced by the escrow contract):
+    ///   - The escrow must be in `Locked` state.
+    ///   - `expires_at` must have elapsed.
+    ///
+    /// Preconditions (enforced here):
+    ///   - The delivery must exist.
+    ///   - The delivery must be in a state from which `Cancelled` is a legal
+    ///     transition: `Pending`, `Active`, or `InTransit`.
+    ///
+    /// Post-condition: `get_combined_state` reports synchronized
+    /// (`Cancelled` + `Refunded`).
+    #[allow(deprecated)] // events().publish() is deprecated in SDK 27.0.0 but still functional; tracked in SOROBAN_SDK_27_MIGRATION.md#event-system-migration (Issue #114)
+    pub fn reclaim_delivery_expired_escrow(env: Env, delivery_id: DeliveryId) {
+        // ── 1. Load delivery ────────────────────────────────────────────────
+        let key = delivery_key(delivery_id);
+        let mut delivery: DeliveryRecord = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::DeliveryNotFound));
+
+        // ── 2. Validate delivery-side transition (before touching escrow) ──
+        validate_transition(delivery.status, DeliveryStatus::Cancelled)
+            .unwrap_or_else(|_| panic_with_error!(&env, FaniLabError::InvalidState));
+
+        // ── 3. Call escrow contract (interaction before local state write) ─
+        //    `reclaim_expired_escrow` panics when the escrow is not Locked,
+        //    not expired, or the contract is paused — all of which propagate
+        //    as a revert so the delivery status below is never mutated.
+        let escrow_address: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::EscrowContract)
+            .unwrap_or_else(|| panic_with_error!(&env, FaniLabError::NotInitialized));
+
+        let _: () = env.invoke_contract(
+            &escrow_address,
+            &soroban_sdk::Symbol::new(&env, "reclaim_expired_escrow"),
+            soroban_sdk::vec![&env, u64::from(delivery_id).into_val(&env)],
+        );
+
+        // ── 4. Commit local delivery state change ──────────────────────────
+        delivery.status = DeliveryStatus::Cancelled;
+        env.storage().persistent().set(&key, &delivery);
+        env.storage().persistent().extend_ttl(
+            &key,
+            ttl::LEDGER_TTL_THRESHOLD,
+            ttl::LEDGER_TTL_EXTEND_TO,
+        );
+
+        // ── 5. Emit event ──────────────────────────────────────────────────
+        env.events().publish(
+            (events::delivery_cancelled(&env),),
+            (delivery_id, delivery.sender),
+        );
     }
 }
 
